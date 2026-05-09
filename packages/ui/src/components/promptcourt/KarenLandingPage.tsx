@@ -39,9 +39,10 @@ const metrics = [
 ] as const;
 
 const promptExamples = [
-  ['fix this', 'allowed with side-eye', 'Karen lets it run, then asks sharper quiz questions because you gave her no map.'],
-  ['make this faster', 'allowed, flagged', 'Performance work is valid. Karen records that the acceptance criteria were thin.'],
-  ['do your magic', 'blocked', 'No action, no scope, no intent. Grandma shuts the laptop.'],
+  ['hi', 'allowed', 'Chat, questions, and normal back-and-forth are not code mutation requests. Karen lets them through.'],
+  ['explore the codebase', 'allowed', 'Read-only exploration, research, explanation, and repo mapping are fine without a full spec.'],
+  ['fix this', 'blocked', 'Mutation request with no target, context, acceptance criteria, or verification. Karen stops it.'],
+  ['make this faster', 'blocked', 'Performance work needs a symptom, target path, benchmark, or measurable outcome before code runs.'],
   ['refactor auth without changing login behavior', 'approved', 'Clear area, clear risk, clear thing to preserve.'],
 ] as const;
 
@@ -226,7 +227,7 @@ const DemoCinema = () => (
       <div className="min-h-[260px] overflow-hidden rounded-sm border border-white/15 bg-black p-4 font-mono text-sm">
         {[
           '$ karen "make auth faster"',
-          'WARN lazy prompt: allowed, quiz difficulty raised',
+          'BLOCK vague mutation: name target, symptom, and verification',
           'SANDBOX agent run started',
           'DIFF 3 files changed',
           'QUIZ What behavior changed?',
@@ -506,7 +507,7 @@ const KarenLandingContent: React.FC<{ overview?: PromptCourtOverview | null }> =
                 Karen is strict about nonsense, not about typing a novel.
               </h2>
               <p className="mt-5 text-lg leading-8 text-[#4d4d4d]">
-                Hackathon users will type messy prompts. That is fine. Karen now flags lazy prompts, raises the quiz pressure, and only hard-blocks requests with no real coding intent.
+                Hackathon users will type messy prompts. That is fine for chat, research, explanation, and repo exploration. Karen blocks vague mutation requests until they name a target, symptom, and verification path.
               </p>
             </div>
             <PromptJudgeShowcase />

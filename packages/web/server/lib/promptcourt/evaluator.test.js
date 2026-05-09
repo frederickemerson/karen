@@ -65,7 +65,7 @@ describe('promptcourt evaluator', () => {
   });
 
   it('still blocks lazy mutation prompts even when they sound short and casual', () => {
-    for (const prompt of ['fix it', 'optimize this', 'get it working', 'make it work', 'refactor the thing', 'just do it']) {
+    for (const prompt of ['fix it', 'fix this', 'make this faster', 'optimize this', 'get it working', 'make it work', 'refactor the thing', 'just do it']) {
       const result = evaluatePrompt(prompt);
       expect(result.allowed, `${prompt} should be blocked`).toBe(false);
       expect(result.verdict).toBe('blocked');
