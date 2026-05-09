@@ -123,6 +123,35 @@ describe('OpenCode lifecycle', () => {
     await server.close();
   });
 
+  it('prepends the Karen git commit guard when provided', async () => {
+    delete process.env.OPENCODE_BINARY;
+    const child = createMockChild();
+    spawnMock.mockImplementationOnce(() => {
+      queueMicrotask(() => {
+        child.stdout.emit('data', 'opencode server listening on http://127.0.0.1:45678\n');
+      });
+      return child;
+    });
+
+    const buildKarenGitCommitGuardEnv = vi.fn((pathValue) => ({
+      PATH: `/tmp/karen-git-guard:${pathValue}`,
+      env: {
+        KAREN_REAL_GIT: '/usr/bin/git',
+        KAREN_GIT_COMMIT_GUARD: '1',
+      },
+    }));
+    const runtime = createRuntime({ buildKarenGitCommitGuardEnv });
+    const server = await runtime.startOpenCode();
+    const [, , options] = spawnMock.mock.calls[0];
+
+    expect(buildKarenGitCommitGuardEnv).toHaveBeenCalledWith('/home/user/.bun/bin:/usr/local/bin:/usr/bin');
+    expect(options.env.PATH).toBe('/tmp/karen-git-guard:/home/user/.bun/bin:/usr/local/bin:/usr/bin');
+    expect(options.env.KAREN_REAL_GIT).toBe('/usr/bin/git');
+    expect(options.env.KAREN_GIT_COMMIT_GUARD).toBe('1');
+
+    await server.close();
+  });
+
   it('falls back to buildAugmentedPath when buildManagedOpenCodePath is not provided', async () => {
     delete process.env.OPENCODE_BINARY;
     const child = createMockChild();

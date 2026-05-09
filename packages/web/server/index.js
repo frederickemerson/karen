@@ -41,6 +41,7 @@ import {
 } from './lib/event-stream/index.js';
 import { createFsSearchRuntime as createFsSearchRuntimeFactory } from './lib/fs/search.js';
 import { createOpenCodeLifecycleRuntime } from './lib/opencode/lifecycle.js';
+import { createKarenGitCommitGuardRuntime } from './lib/opencode/git-commit-guard.js';
 import { createOpenCodeEnvRuntime } from './lib/opencode/env-runtime.js';
 import { resolveOpenCodeEnvConfig } from './lib/opencode/env-config.js';
 import { createHmrStateRuntime } from './lib/opencode/hmr-state-runtime.js';
@@ -870,6 +871,12 @@ const startupPipelineRuntime = createStartupPipelineRuntime({
   createMessageStreamWsRuntime,
   createServerStartupRuntime,
 });
+const karenGitCommitGuardRuntime = createKarenGitCommitGuardRuntime({
+  fs,
+  os,
+  path,
+  processLike: process,
+});
 
 const openCodeLifecycleState = {};
 Object.defineProperties(openCodeLifecycleState, {
@@ -924,6 +931,7 @@ const openCodeLifecycleRuntime = createOpenCodeLifecycleRuntime({
   clearResolvedOpenCodeBinary,
   buildAugmentedPath,
   buildManagedOpenCodePath,
+  buildKarenGitCommitGuardEnv: karenGitCommitGuardRuntime.buildGuardedEnv,
   getManagedOpenCodeShellEnvSnapshot: getLoginShellEnvSnapshot,
   getActiveSessionCount,
 });

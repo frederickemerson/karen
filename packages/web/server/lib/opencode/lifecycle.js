@@ -24,6 +24,7 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
     clearResolvedOpenCodeBinary,
     buildAugmentedPath,
     buildManagedOpenCodePath,
+    buildKarenGitCommitGuardEnv,
     getManagedOpenCodeShellEnvSnapshot,
     getActiveSessionCount = () => 0,
   } = deps;
@@ -439,6 +440,11 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
     const shellEnv = typeof getManagedOpenCodeShellEnvSnapshot === 'function'
       ? getManagedOpenCodeShellEnvSnapshot() || {}
       : {};
+    const gitCommitGuard = typeof buildKarenGitCommitGuardEnv === 'function'
+      ? buildKarenGitCommitGuardEnv(envPath)
+      : null;
+    const guardedPath = gitCommitGuard?.PATH || envPath;
+    const guardedEnv = gitCommitGuard?.env || {};
 
     try {
       const serverInstance = await createManagedOpenCodeServerProcess({
@@ -450,7 +456,8 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
         env: {
           ...shellEnv,
           ...process.env,
-          PATH: envPath,
+          ...guardedEnv,
+          PATH: guardedPath,
           OPENCODE_SERVER_PASSWORD: openCodePassword,
         },
       });
