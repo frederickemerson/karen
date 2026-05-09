@@ -9,6 +9,7 @@ import {
 } from '@remixicon/react';
 import { motion } from 'motion/react';
 
+import { playKarenEventAudio } from '@/lib/karenVoice';
 import { cn } from '@/lib/utils';
 
 export type BadgeStatus = 'unlocked' | 'locked';
@@ -223,6 +224,7 @@ export const KarenBadgeWall: React.FC<KarenBadgeWallProps> = ({
       if (typeof navigator !== 'undefined' && navigator.clipboard) {
         await navigator.clipboard.writeText(proofUrl);
       }
+      void playKarenEventAudio('badge-unlock', { voice: false });
       setShareState('copied');
       globalThis.setTimeout(() => setShareState('idle'), 1800);
     } catch {

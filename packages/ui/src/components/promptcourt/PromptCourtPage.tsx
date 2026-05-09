@@ -13,6 +13,7 @@ import {
   type PromptCourtRunEvent,
 } from '@/lib/promptcourt';
 import { cn } from '@/lib/utils';
+import { playKarenEventAudio, type KarenAudioEvent } from '@/lib/karenVoice';
 import { KarenLogo } from './KarenLogo';
 import { KarenMascot } from './KarenMascot';
 import { isKarenAuthConfigured, isKarenCloudConfigured } from '@/lib/karenCloudConfig';
@@ -167,7 +168,7 @@ const LaunchControls = ({ profile, onRun, runPrompt, onRunPromptChange, runStatu
           <div className="typography-ui-label text-muted-foreground">Launch desk</div>
           <h2 className="mt-1 text-xl font-semibold tracking-normal text-foreground">Run Karen where the code lives</h2>
           <p className="mt-2 typography-body text-muted-foreground">
-            Start a guarded run here, or keep using the terminal when you want the full interactive quiz.
+            The GUI launches and streams runs. The terminal `/tui` path still owns the live interactive quiz.
           </p>
         </div>
       </div>
@@ -192,7 +193,7 @@ const LaunchControls = ({ profile, onRun, runPrompt, onRunPromptChange, runStatu
             Open workspace
           </a>
           <a href="#karen-help" className="rounded-md border border-border px-3 py-2 typography-ui-label text-foreground hover:bg-muted/40">
-            Command help
+            Terminal commands
           </a>
         </div>
         {runStatus ? <div className="typography-micro text-muted-foreground">{runStatus}</div> : null}
@@ -210,6 +211,14 @@ const runEventTone = (status: string): 'good' | 'bad' | 'default' => {
   if (status === 'quiz_passed' || status === 'synced') return 'good';
   if (status === 'blocked' || status === 'rollback' || status === 'failed') return 'bad';
   return 'default';
+};
+
+const audioEventForRunStatus = (status: string): KarenAudioEvent | null => {
+  if (status === 'blocked') return 'prompt-blocked';
+  if (status === 'quiz_passed' || status === 'synced') return 'quiz-pass';
+  if (status === 'rollback') return 'rollback';
+  if (status === 'failed') return 'quiz-fail';
+  return null;
 };
 
 const LiveRunStream = ({ events }: { events: PromptCourtRunEvent[] }) => (
@@ -249,199 +258,6 @@ const LiveRunStream = ({ events }: { events: PromptCourtRunEvent[] }) => (
         <div className="rounded-md border border-dashed border-border bg-background/50 p-4 typography-body text-muted-foreground">
           Start a guarded prompt from the GUI or terminal. Karen will stream the verdict here.
         </div>
-      )}
-    </div>
-  </section>
-);
-
-const Rewards = ({ profile }: { profile: PromptCourtProfile }) => (
-  <section className="flex flex-col gap-3">
-    <div className="flex items-center justify-between gap-3">
-      <h2 className="text-xl font-semibold tracking-normal text-foreground">Rewards</h2>
-      <span className="typography-micro text-muted-foreground">{profile.rewards.length} unlocked</span>
-    </div>
-    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-      {profile.rewards.length > 0 ? profile.rewards.map((reward) => (
-        <div
-          key={reward.id}
-          className={cn(
-            'rounded-md border p-3',
-            reward.tone === 'bad'
-              ? 'border-[var(--status-error)]/30 bg-[var(--status-error)]/10'
-              : 'border-[var(--status-success)]/30 bg-[var(--status-success)]/10',
-          )}
-        >
-          <div className="typography-ui-label font-semibold text-foreground">{reward.label}</div>
-          <div className="mt-1 typography-micro text-muted-foreground">
-            {reward.tone === 'bad' ? 'Visible on the record' : 'Counts toward clout'}
-          </div>
-        </div>
-      )) : (
-        <div className="rounded-md border border-border bg-card p-4 typography-body text-muted-foreground">
-          No rewards yet. Karen is waiting.
-        </div>
-      )}
-    </div>
-  </section>
-);
-
-const QuizHistory = ({ profile }: { profile: PromptCourtProfile }) => {
-  const quizSessions = profile.recentSessions.filter((session) => typeof session.quizPassed === 'boolean');
-  const passCount = quizSessions.filter((session) => session.quizPassed).length;
-
-  return (
-    <section className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h2 className="text-xl font-semibold tracking-normal text-foreground">Quiz History</h2>
-          <p className="mt-1 typography-micro text-muted-foreground">Recent code-read checks from Karen terminal runs.</p>
-        </div>
-        <span className="typography-micro text-muted-foreground">
-          {passCount}/{quizSessions.length || 0} passed
-        </span>
-      </div>
-      <div className="overflow-hidden rounded-md border border-border bg-card">
-        {quizSessions.length > 0 ? quizSessions.slice(0, 10).map((session) => {
-          const tone = statusTone(session);
-          return (
-            <div key={session.id} className="grid gap-3 border-b border-border px-4 py-3 last:border-b-0 md:grid-cols-[160px_1fr_auto]">
-              <div>
-                <span className={cn(
-                  'rounded-sm px-2 py-1 typography-micro font-medium',
-                  tone === 'good' && 'bg-[var(--status-success)]/15 text-[var(--status-success)]',
-                  tone === 'bad' && 'bg-[var(--status-error)]/15 text-[var(--status-error)]',
-                  tone === 'default' && 'bg-muted text-muted-foreground',
-                )}>
-                  {session.quizPassed ? 'passed' : 'failed'}
-                </span>
-                <div className="mt-2 typography-micro text-muted-foreground">{formatDate(session.completedAt ?? session.createdAt)}</div>
-              </div>
-              <div>
-                <div className="typography-ui-label text-foreground">{statusLabel(session.status)}</div>
-                {session.prompt ? (
-                  <p className="mt-1 line-clamp-2 typography-body text-muted-foreground">{session.prompt}</p>
-                ) : null}
-                {session.changedFiles && session.changedFiles.length > 0 ? (
-                  <div className="mt-2 flex flex-wrap gap-1.5">
-                    {session.changedFiles.slice(0, 4).map((file) => (
-                      <span key={file} className="rounded-sm bg-background px-2 py-1 font-mono text-[11px] text-muted-foreground">
-                        {file}
-                      </span>
-                    ))}
-                    {session.changedFiles.length > 4 ? (
-                      <span className="rounded-sm bg-background px-2 py-1 typography-micro text-muted-foreground">
-                        +{session.changedFiles.length - 4}
-                      </span>
-                    ) : null}
-                  </div>
-                ) : null}
-              </div>
-              <div className="text-left md:text-right">
-                <div className="typography-micro text-muted-foreground">Prompt score</div>
-                <div className="typography-title text-foreground">{session.promptScore}/100</div>
-              </div>
-            </div>
-          );
-        }) : (
-          <div className="p-4 typography-body text-muted-foreground">
-            No quiz runs yet. Start Karen in the terminal and let it generate a patch.
-          </div>
-        )}
-      </div>
-    </section>
-  );
-};
-
-const FailedResetLessons = ({ profile }: { profile: PromptCourtProfile }) => {
-  const failedSessions = profile.recentSessions.filter((session) => session.rollbackTriggered || session.status === 'blocked_bad_prompt');
-  const latestRewrite = profile.publicPosts.find((post) => post.suggestedRewrite)?.suggestedRewrite;
-
-  return (
-    <section className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h2 className="text-xl font-semibold tracking-normal text-foreground">Failed Reset Lessons</h2>
-          <p className="mt-1 typography-micro text-muted-foreground">What Karen wants you to fix before another run.</p>
-        </div>
-        <span className="typography-micro text-muted-foreground">{failedSessions.length} recent resets or blocks</span>
-      </div>
-      <div className="grid gap-3 lg:grid-cols-2">
-        <div className="rounded-md border border-border bg-card p-4">
-          <div className="typography-ui-label font-semibold text-foreground">Default recovery drill</div>
-          <ol className="mt-3 grid gap-2 typography-body text-muted-foreground">
-            <li>1. Read the changed files before answering the quiz.</li>
-            <li>2. Name the risky file, changed symbol, and expected behavior.</li>
-            <li>3. Rewrite vague prompts with files, constraints, tests, and done criteria.</li>
-            <li>4. Keep prompts short enough for Karen to judge the intent.</li>
-          </ol>
-          {latestRewrite ? (
-            <div className="mt-4 rounded-md bg-muted/45 p-3">
-              <div className="typography-micro text-muted-foreground">Latest rewrite advice</div>
-              <p className="mt-1 typography-body text-foreground">{latestRewrite}</p>
-            </div>
-          ) : null}
-        </div>
-        <div className="overflow-hidden rounded-md border border-border bg-card">
-          {failedSessions.length > 0 ? failedSessions.slice(0, 5).map((session) => (
-            <div key={session.id} className="border-b border-border px-4 py-3 last:border-b-0">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="rounded-sm bg-[var(--status-error)]/15 px-2 py-1 typography-micro font-medium text-[var(--status-error)]">
-                  {session.rollbackTriggered ? 'reset after quiz' : 'blocked before run'}
-                </span>
-                <span className="typography-micro text-muted-foreground">{formatDate(session.completedAt ?? session.createdAt)}</span>
-              </div>
-              {session.prompt ? (
-                <p className="mt-2 line-clamp-2 typography-body text-foreground">{session.prompt}</p>
-              ) : null}
-              {session.reasons && session.reasons.length > 0 ? (
-                <div className="mt-2 flex flex-wrap gap-1.5">
-                  {session.reasons.slice(0, 3).map((reason) => (
-                    <span key={reason} className="rounded-sm bg-background px-2 py-1 typography-micro text-muted-foreground">
-                      {reason}
-                    </span>
-                  ))}
-                </div>
-              ) : null}
-              {session.changedFiles && session.changedFiles.length > 0 ? (
-                <div className="mt-2 typography-micro text-muted-foreground">
-                  Reset touched {session.changedFiles.slice(0, 3).join(', ')}
-                  {session.changedFiles.length > 3 ? ` +${session.changedFiles.length - 3}` : ''}
-                </div>
-              ) : null}
-            </div>
-          )) : (
-            <div className="p-4 typography-body text-muted-foreground">
-              No failed resets yet. Suspiciously clean.
-            </div>
-          )}
-        </div>
-      </div>
-    </section>
-  );
-};
-
-const Leaderboard = ({ users }: { users: PromptCourtProfile[] }) => (
-  <section className="flex flex-col gap-3">
-    <h2 className="text-xl font-semibold tracking-normal text-foreground">Leaderboard</h2>
-    <div className="overflow-hidden rounded-md border border-border bg-card">
-      {users.length > 0 ? users.map((entry, index) => (
-        <a
-          key={entry.user.username}
-          href={`/u/${encodeURIComponent(entry.user.username)}`}
-          className="grid grid-cols-[48px_1fr_auto] items-center gap-3 border-b border-border px-4 py-3 last:border-b-0 hover:bg-muted/35"
-        >
-          <div className="typography-ui-label text-muted-foreground">#{index + 1}</div>
-          <div>
-            <div className="typography-ui-label font-semibold text-foreground">@{entry.user.username}</div>
-            <div className="typography-micro text-muted-foreground">{entry.stats.level}</div>
-          </div>
-          <div className="text-right">
-            <div className="typography-ui-label font-semibold text-foreground">{entry.stats.disciplineScore}</div>
-            <div className="typography-micro text-muted-foreground">{entry.stats.longestStreak} streak</div>
-          </div>
-        </a>
-      )) : (
-        <div className="p-4 typography-body text-muted-foreground">No ranked users yet.</div>
       )}
     </div>
   </section>
@@ -595,6 +411,7 @@ const PromptCourtLayout: React.FC<{
   const [runStatus, setRunStatus] = React.useState<string | null>(null);
   const [runEvents, setRunEvents] = React.useState<PromptCourtRunEvent[]>([]);
   const [isRunning, setIsRunning] = React.useState(false);
+  const announcedRunEvents = React.useRef(new Set<string>());
   const feed = overview?.feed ?? [];
   const canRun = runPrompt.trim().length > 0 && !isRunning;
 
@@ -608,8 +425,18 @@ const PromptCourtLayout: React.FC<{
   React.useEffect(() => {
     const username = profile?.user.username || getPromptCourtUsername();
     let cancelled = false;
-    const addEvents = (events: PromptCourtRunEvent[]) => {
+    const addEvents = (events: PromptCourtRunEvent[], announce = false) => {
       if (cancelled || events.length === 0) return;
+      if (announce) {
+        for (const event of events) {
+          if (announcedRunEvents.current.has(event.id)) continue;
+          announcedRunEvents.current.add(event.id);
+          const audioEvent = audioEventForRunStatus(event.status);
+          if (audioEvent) void playKarenEventAudio(audioEvent);
+        }
+      } else {
+        for (const event of events) announcedRunEvents.current.add(event.id);
+      }
       setRunEvents((current) => {
         const byId = new Map(current.map((event) => [event.id, event]));
         for (const event of events) byId.set(event.id, event);
@@ -619,13 +446,13 @@ const PromptCourtLayout: React.FC<{
       });
     };
 
-    void fetchPromptCourtRunEvents({ username, limit: 30 }).then(addEvents).catch(() => {});
+    void fetchPromptCourtRunEvents({ username, limit: 30 }).then((events) => addEvents(events, false)).catch(() => {});
 
     const params = new URLSearchParams({ username });
     const events = new EventSource(`/api/promptcourt/runs/events?${params.toString()}`);
     events.addEventListener('run', (message) => {
       try {
-        addEvents([JSON.parse((message as MessageEvent).data) as PromptCourtRunEvent]);
+        addEvents([JSON.parse((message as MessageEvent).data) as PromptCourtRunEvent], true);
       } catch {
         // Ignore malformed stream events.
       }
@@ -664,7 +491,7 @@ const PromptCourtLayout: React.FC<{
           <div className="flex flex-wrap items-center gap-3">
             <a href="/karen/landing" className="typography-micro text-primary hover:underline">Landing page</a>
             <div className="typography-micro text-muted-foreground">
-              {source === 'cloud' ? 'Live Convex profile' : 'Local profile'} · Karen watches prompts, git diffs, quiz passes, and public failures.
+              {source === 'cloud' ? 'Live Convex profile' : 'Local profile'} · GUI launch and terminal `/tui` share this record.
             </div>
             <KarenAuthBar />
           </div>
@@ -685,29 +512,38 @@ const PromptCourtLayout: React.FC<{
             canRun={canRun}
           />
         ) : null}
-        <LiveRunStream events={runEvents} />
-        {profile ? <Rewards profile={profile} /> : null}
-        {profile ? <QuizHistory profile={profile} /> : null}
-        {profile ? <FailedResetLessons profile={profile} /> : null}
-        <div className="grid gap-6 lg:grid-cols-[0.85fr_1.15fr]">
-          <Leaderboard users={overview?.leaderboard ?? []} />
-          {profile ? <RecentSessions profile={profile} /> : null}
+        <div className="grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
+          <LiveRunStream events={runEvents} />
+          <section className="rounded-md border border-border bg-card p-4">
+            <h2 className="text-xl font-semibold tracking-normal text-foreground">Terminal Bridge</h2>
+            <p className="mt-2 typography-body text-muted-foreground">
+              Run `karen` for guarded prompts, `/tui` for live OpenCode interception, and `/gui` to reopen this control room.
+            </p>
+            <div className="mt-4 grid gap-2">
+              {commandCards.slice(0, 4).map((card) => (
+                <CommandCard key={card.command} {...card} />
+              ))}
+            </div>
+          </section>
         </div>
-        <section className="flex flex-col gap-3">
-          <div className="flex items-center justify-between gap-3">
-            <h2 className="text-xl font-semibold tracking-normal text-foreground">Public Feed</h2>
-            <span className="typography-micro text-muted-foreground">{feed.length} records</span>
-          </div>
-          {feed.length > 0 ? (
-            <div className="grid gap-3 lg:grid-cols-2">
-              {feed.map((post) => <PublicPostCard key={post.id} post={post} />)}
+        <div className="grid gap-6 lg:grid-cols-2">
+          {profile ? <RecentSessions profile={profile} /> : null}
+          <section className="flex flex-col gap-3">
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="text-xl font-semibold tracking-normal text-foreground">Public Feed</h2>
+              <span className="typography-micro text-muted-foreground">{feed.length} records</span>
             </div>
-          ) : (
-            <div className="rounded-md border border-border bg-card p-6 typography-body text-muted-foreground">
-              No public failures yet.
-            </div>
-          )}
-        </section>
+            {feed.length > 0 ? (
+              <div className="grid gap-3">
+                {feed.slice(0, 4).map((post) => <PublicPostCard key={post.id} post={post} />)}
+              </div>
+            ) : (
+              <div className="rounded-md border border-border bg-card p-6 typography-body text-muted-foreground">
+                No public failures yet.
+              </div>
+            )}
+          </section>
+        </div>
       </main>
     </div>
   );

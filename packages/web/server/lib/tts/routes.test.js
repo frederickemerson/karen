@@ -1,8 +1,14 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 
 import { registerTtsRoutes } from './routes.js';
+
+const originalEnv = { ...process.env };
+const tempDirs = [];
 
 const createApp = () => {
   const app = express();
@@ -14,9 +20,28 @@ const createApp = () => {
   return app;
 };
 
+const createTempDataDir = () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'karen-tts-routes-'));
+  tempDirs.push(dir);
+  return dir;
+};
+
+const mockAudioResponse = (bytes = [1, 2, 3], headers = {}) => ({
+  ok: true,
+  status: 200,
+  arrayBuffer: async () => Uint8Array.from(bytes).buffer,
+  headers: {
+    get: (key) => headers[key.toLowerCase()] ?? null,
+  },
+});
+
 describe('tts routes', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    process.env = { ...originalEnv };
+    for (const dir of tempDirs.splice(0)) {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('retries note summarization with notification mode before failing', async () => {
@@ -98,5 +123,62 @@ describe('tts routes', () => {
       summarized: false,
       reason: 'zen API returned 503',
     });
+  });
+
+  it('caches Karen ElevenLabs speech and tracks fresh character usage once', async () => {
+    process.env.ELEVENLABS_API_KEY = 'test-elevenlabs-key';
+    process.env.ELEVENLABS_VOICE_ID = 'voice_test';
+    process.env.OPENCHAMBER_DATA_DIR = createTempDataDir();
+    process.env.KAREN_AUDIO_CACHE = '1';
+    process.env.KAREN_AUDIO_DEMO_MODE = '0';
+    process.env.KAREN_ELEVENLABS_DAILY_CAP = '500';
+
+    const fetchMock = vi.fn(async () => mockAudioResponse([7, 8, 9], {
+      'content-type': 'audio/mpeg',
+      'character-cost': '42',
+      'request-id': 'req_test',
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const payload = {
+      text: 'Karen says read the diff.',
+      voiceId: 'voice_test',
+      modelId: 'eleven_flash_v2_5',
+    };
+    const first = await request(createApp()).post('/api/karen/elevenlabs/speech').send(payload);
+    const second = await request(createApp()).post('/api/karen/elevenlabs/speech').send(payload);
+    const usage = await request(createApp()).get('/api/karen/elevenlabs/usage');
+
+    expect(first.status).toBe(200);
+    expect(first.headers['x-karen-audio-cache']).toBe('miss');
+    expect(first.headers['x-elevenlabs-character-cost']).toBe('42');
+    expect(second.status).toBe(200);
+    expect(second.headers['x-karen-audio-cache']).toBe('hit');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(usage.body).toMatchObject({
+      requests: 1,
+      characterCost: 42,
+      dailyCap: 500,
+      cacheEnabled: true,
+    });
+  });
+
+  it('blocks fresh Karen ElevenLabs audio when the daily cap would be exceeded', async () => {
+    process.env.ELEVENLABS_API_KEY = 'test-elevenlabs-key';
+    process.env.OPENCHAMBER_DATA_DIR = createTempDataDir();
+    process.env.KAREN_AUDIO_CACHE = '1';
+    process.env.KAREN_AUDIO_DEMO_MODE = '0';
+    process.env.KAREN_ELEVENLABS_DAILY_CAP = '10';
+
+    const fetchMock = vi.fn(async () => mockAudioResponse());
+    vi.stubGlobal('fetch', fetchMock);
+
+    const response = await request(createApp())
+      .post('/api/karen/elevenlabs/sound-effect')
+      .send({ text: 'this prompt is longer than the cap', durationSeconds: 1 });
+
+    expect(response.status).toBe(429);
+    expect(response.body.error).toContain('daily cap');
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

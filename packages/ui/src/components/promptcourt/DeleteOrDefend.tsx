@@ -13,6 +13,7 @@ import {
   RiTimerFlashLine,
 } from '@remixicon/react';
 import { AnimatePresence, motion } from 'motion/react';
+import { playKarenEventAudio } from '@/lib/karenVoice';
 
 type BossState = 'defending' | 'saved' | 'deleted';
 
@@ -103,6 +104,7 @@ export const DeleteOrDefend: React.FC = () => {
   const [bossState, setBossState] = React.useState<BossState>('defending');
   const [activeQuestion, setActiveQuestion] = React.useState(0);
   const [pulse, setPulse] = React.useState(0);
+  const lastAudioState = React.useRef<BossState>('defending');
 
   const activeChallenge = getChallenge(activeQuestion);
   const correctCount = countCorrectAnswers(answers);
@@ -114,6 +116,7 @@ export const DeleteOrDefend: React.FC = () => {
 
   const resetTrial = () => {
     setAnswers(createEmptyAnswers());
+    lastAudioState.current = 'defending';
     setBossState('defending');
     setActiveQuestion(0);
     setPulse((current) => current + 1);
@@ -159,6 +162,12 @@ export const DeleteOrDefend: React.FC = () => {
     : bossState === 'deleted'
       ? pickLine(grandmaVerdicts.deleted, stateSeed)
       : pickLine(grandmaVerdicts.pressure, activeQuestion + answeredCount + pulse);
+
+  React.useEffect(() => {
+    if (bossState === 'defending' || lastAudioState.current === bossState) return;
+    lastAudioState.current = bossState;
+    void playKarenEventAudio(bossState === 'saved' ? 'final-boss-saved' : 'final-boss-deleted');
+  }, [bossState]);
 
   return (
     <section className="relative overflow-hidden border-y border-[#2a241c] bg-[#160f12] text-[#fff7df]">

@@ -17,6 +17,7 @@
     "status-local": "node ../../scripts/install-karen.mjs status",
     "doctor-local": "node ../../scripts/install-karen.mjs doctor",
     "self-check": "node self-check/worktree-safe.mjs && node self-check/cli-and-installer.mjs",
+    "test": "bun test bin/*.test.js && node self-check/worktree-safe.mjs && node self-check/cli-and-installer.mjs",
     "build": "node --check bin/karen.js",
     "type-check": "node --check bin/karen.js",
     "lint": "node --check bin/karen.js",

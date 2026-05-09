@@ -1,5 +1,6 @@
 import React from 'react';
 import { AnimatePresence, motion } from 'motion/react';
+import { playKarenEventAudio } from '@/lib/karenVoice';
 
 type QuizOption = {
   id: 'A' | 'B' | 'C' | 'D';
@@ -87,6 +88,7 @@ export const DiffQuizShowcase: React.FC<{ className?: string }> = ({ className =
       setCountdown((value) => {
         if (value <= 1) {
           window.clearInterval(timer);
+          if (soundEnabled) void playKarenEventAudio('quiz-fail');
           setSelectedId(null);
           setRollback(true);
           setStreak(0);
@@ -96,7 +98,7 @@ export const DiffQuizShowcase: React.FC<{ className?: string }> = ({ className =
       });
     }, 1000);
     return () => window.clearInterval(timer);
-  }, [isLocked, roundIndex]);
+  }, [isLocked, roundIndex, soundEnabled]);
 
   const resetForNextRound = React.useCallback(() => {
     setRoundIndex((value) => value + 1);
@@ -122,10 +124,12 @@ export const DiffQuizShowcase: React.FC<{ className?: string }> = ({ className =
     if (isLocked) return;
     setSelectedId(option.id);
     if (option.correct) {
+      if (soundEnabled) void playKarenEventAudio('quiz-pass');
       setScore((value) => value + 250 + countdown * 10);
       setStreak((value) => value + 1);
       setCelebrating(true);
     } else {
+      if (soundEnabled) void playKarenEventAudio('quiz-fail');
       setRollback(true);
       setStreak(0);
     }
@@ -147,8 +151,8 @@ export const DiffQuizShowcase: React.FC<{ className?: string }> = ({ className =
         }}
       />
 
-      <div className="relative z-10 grid gap-4 lg:grid-cols-[0.82fr_1.18fr]">
-        <div className="rounded-sm border border-[#2a241c] bg-[#17130f] p-4 text-[#f8f1e3]">
+      <div className="relative z-10 grid min-w-0 gap-4 lg:grid-cols-[0.82fr_1.18fr]">
+        <div className="min-w-0 rounded-sm border border-[#2a241c] bg-[#17130f] p-4 text-[#f8f1e3]">
           <div className="flex items-center justify-between gap-3">
             <div>
               <div className="font-mono text-xs uppercase tracking-[0.18em] text-[#ffcc66]">Karen live quiz</div>
@@ -182,10 +186,10 @@ export const DiffQuizShowcase: React.FC<{ className?: string }> = ({ className =
 
           <div className="mt-5 rounded-sm border border-[#f8f1e3]/20 bg-black/30 p-3">
             <div className="mb-2 flex items-center justify-between gap-2 font-mono text-xs text-[#c9bca8]">
-              <span>{round.changedFile}</span>
+              <span className="min-w-0 break-all">{round.changedFile}</span>
               <span>{round.diffStat}</span>
             </div>
-            <div className="space-y-1 font-mono text-xs leading-5">
+            <div className="space-y-1 overflow-hidden font-mono text-xs leading-5">
               {codeLines.map((line, index) => (
                 <motion.div
                   key={`${line}-${index}`}
@@ -225,8 +229,8 @@ export const DiffQuizShowcase: React.FC<{ className?: string }> = ({ className =
           )}
         </div>
 
-        <div className="relative rounded-sm border border-[#2a241c] bg-[#fffaf0] p-4">
-          <div className="flex items-start justify-between gap-4">
+        <div className="relative min-w-0 rounded-sm border border-[#2a241c] bg-[#fffaf0] p-4">
+          <div className="flex min-w-0 items-start justify-between gap-4">
             <div>
               <div className="font-mono text-xs uppercase tracking-[0.18em] text-[#b7332c]">question {roundIndex + 1}</div>
               <h3 className="mt-2 text-2xl font-semibold tracking-normal text-[#17130f]">{round.question}</h3>
@@ -249,6 +253,7 @@ export const DiffQuizShowcase: React.FC<{ className?: string }> = ({ className =
                 <motion.button
                   key={option.id}
                   type="button"
+                  data-testid={`karen-quiz-option-${option.id}`}
                   onClick={() => answer(option)}
                   className={[
                     'min-h-32 rounded-sm border-2 p-4 text-left transition-opacity',

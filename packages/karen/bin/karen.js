@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline/promises';
 import { spawn, spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import net from 'node:net';
 import * as nodePty from 'node-pty';
 import ts from 'typescript';
@@ -78,6 +78,11 @@ const bellAllowed = () => audioAllowed() && envEnabled('KAREN_BELL', true);
 const musicAllowed = () => audioAllowed() && envEnabled('KAREN_MUSIC', true);
 const speechAllowed = () => audioAllowed() && envEnabled('KAREN_SAY', false);
 const systemAudioAllowed = () => audioAllowed() && envEnabled('KAREN_SYSTEM_AUDIO', false);
+const elevenLabsTerminalAllowed = () => (
+  audioAllowed()
+  && envEnabled('KAREN_ELEVENLABS_AUDIO', Boolean(process.env.ELEVENLABS_API_KEY))
+  && Boolean(process.env.ELEVENLABS_API_KEY)
+);
 
 const terminalBell = () => {
   if (bellAllowed()) process.stdout.write('\x07');
@@ -129,12 +134,142 @@ const speakKaren = (message) => {
   }
 };
 
+const terminalAudioCacheDir = () => process.env.KAREN_AUDIO_CACHE_DIR || path.join(openchamberDataDir, 'karen-audio-cache', 'terminal');
+const terminalAudioUsagePath = () => path.join(openchamberDataDir, 'karen-elevenlabs-usage.json');
+const terminalTodayKey = () => new Date().toISOString().slice(0, 10);
+const terminalAudioCap = () => {
+  const parsed = Number(process.env.KAREN_ELEVENLABS_DAILY_CAP || process.env.KAREN_AUDIO_DAILY_CAP || 20000);
+  return Number.isFinite(parsed) && parsed >= 0 ? Math.trunc(parsed) : 20000;
+};
+
+const readTerminalAudioUsage = () => {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(terminalAudioUsagePath(), 'utf8'));
+    if (parsed?.day === terminalTodayKey()) {
+      return {
+        day: parsed.day,
+        requests: Number(parsed.requests) || 0,
+        characterCost: Number(parsed.characterCost) || 0,
+      };
+    }
+  } catch {
+    // Missing usage file means today has not spent audio yet.
+  }
+  return { day: terminalTodayKey(), requests: 0, characterCost: 0 };
+};
+
+const writeTerminalAudioUsage = (usage) => writeJson(terminalAudioUsagePath(), usage);
+
+const addTerminalAudioUsage = (cost) => {
+  const usage = readTerminalAudioUsage();
+  const next = {
+    day: terminalTodayKey(),
+    requests: usage.requests + 1,
+    characterCost: usage.characterCost + Math.max(0, Math.trunc(Number(cost) || 0)),
+  };
+  writeTerminalAudioUsage(next);
+  return next;
+};
+
+const terminalAudioHash = (value) => {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
+};
+
+const playTerminalAudioFile = (filePath) => {
+  if (process.platform === 'darwin') return spawnSilent('afplay', [filePath]);
+  if (process.platform === 'linux') {
+    return spawnSilent('ffplay', ['-nodisp', '-autoexit', '-loglevel', 'quiet', filePath])
+      || spawnSilent('mpg123', ['-q', filePath]);
+  }
+  if (process.platform === 'win32') {
+    return spawnSilent('powershell.exe', [
+      '-NoProfile',
+      '-Command',
+      `(New-Object Media.SoundPlayer ${JSON.stringify(filePath)}).PlaySync()`,
+    ]);
+  }
+  return false;
+};
+
+const elevenLabsCueLine = (cue, message) => {
+  const cleaned = String(message || '').replace(/^KAREN:\s*/i, '').slice(0, 220);
+  if (cue === 'long-prompt') return cleaned || 'That prompt has a basement. Split it up.';
+  if (cue === 'prompt-blocked') return cleaned || 'Absolutely not. Rewrite the prompt with files, constraints, and tests.';
+  if (cue === 'quiz-wrong') return 'Wrong. Sandbox deleted. Read the code before you defend it.';
+  if (cue === 'quiz-pass') return 'Fine. You read the diff. The patch may live.';
+  return '';
+};
+
+const playElevenLabsCue = async (cue, message = '') => {
+  if (!elevenLabsTerminalAllowed()) return;
+  if (['quiz-start', 'quiz-question'].includes(cue)) return;
+  const text = elevenLabsCueLine(cue, message);
+  if (!text) return;
+
+  const payload = {
+    text,
+    model_id: process.env.ELEVENLABS_MODEL_ID || 'eleven_flash_v2_5',
+    voice_settings: {
+      stability: Number(process.env.ELEVENLABS_STABILITY || 0.62),
+      similarity_boost: Number(process.env.ELEVENLABS_SIMILARITY_BOOST || 0.78),
+      style: Number(process.env.ELEVENLABS_STYLE || 0.34),
+      use_speaker_boost: true,
+      speed: Number(process.env.ELEVENLABS_SPEED || 0.92),
+    },
+  };
+  const voiceId = process.env.ELEVENLABS_VOICE_ID || '21m00Tcm4TlvDq8ikWAM';
+  const cacheKey = terminalAudioHash(JSON.stringify({ voiceId, payload }));
+  const audioPath = path.join(terminalAudioCacheDir(), `${cacheKey}.mp3`);
+  if (fs.existsSync(audioPath)) {
+    playTerminalAudioFile(audioPath);
+    return;
+  }
+
+  const usage = readTerminalAudioUsage();
+  const dailyCap = terminalAudioCap();
+  if (dailyCap > 0 && usage.characterCost + text.length > dailyCap) {
+    speakKaren(text);
+    return;
+  }
+
+  try {
+    const url = `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}?output_format=mp3_44100_128`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'xi-api-key': process.env.ELEVENLABS_API_KEY,
+        'content-type': 'application/json',
+        accept: 'audio/mpeg',
+      },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) throw new Error(`ElevenLabs ${response.status}`);
+    const buffer = Buffer.from(await response.arrayBuffer());
+    fs.mkdirSync(path.dirname(audioPath), { recursive: true });
+    fs.writeFileSync(audioPath, buffer);
+    addTerminalAudioUsage(Number(response.headers.get('character-cost')) || text.length);
+    playTerminalAudioFile(audioPath);
+  } catch {
+    speakKaren(text);
+  }
+};
+
 const playAudioCue = (cue, message = '') => {
   if (!audioAllowed()) return;
+  void playElevenLabsCue(cue, message);
   if (cue === 'long-prompt') {
     bellBurst(6, 55);
     systemBeep(2);
     speakKaren(message);
+  } else if (cue === 'prompt-blocked') {
+    bellBurst(4, 70);
+    systemBeep(2);
+    speakKaren(message || 'Prompt blocked. Rewrite it with actual acceptance criteria.');
   } else if (cue === 'quiz-start') {
     bellBurst(2, 120);
     systemBeep(1);
@@ -452,6 +587,7 @@ const printVerdict = (prompt, evaluation) => {
     for (const reason of evaluation.reasons) line(`  ${color('•', 'red')} ${reason}`);
   }
   if (!evaluation.allowed) {
+    playAudioCue('prompt-blocked', 'Prompt blocked. Rewrite it with files, constraints, tests, and done criteria.');
     line('');
     line(color('Suggested appeal:', 'green'));
     line(evaluation.suggestedRewrite);
@@ -513,10 +649,40 @@ const stripAnsi = (value) => String(value)
 
 const classifyTuiContext = (screenTail) => {
   const tail = stripAnsi(screenTail).toLowerCase();
-  if (/(select|choose|picker|providers?|models?|confirm|continue\?|are you sure|press enter|press any key|search|filter|command|esc|↑|↓|arrow|tab)/i.test(tail)) {
+  const recentLines = tail
+    .split(/\r?\n/)
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .slice(-8)
+    .join('\n');
+  const controlPattern = [
+    'select',
+    'choose',
+    'picker',
+    'providers?',
+    'models?',
+    'confirm',
+    'continue\\?',
+    'are you sure',
+    'press enter',
+    'press any key',
+    'search',
+    'filter',
+    'command palette',
+    'esc',
+    'arrow',
+    'tab',
+    'ctrl\\+',
+    'yes/no',
+    '\\[y/n\\]',
+  ].join('|');
+  if (new RegExp(controlPattern, 'i').test(recentLines)) {
     return 'control';
   }
-  if (/(message|prompt|ask|what do you want|type a message|enter prompt|opencode)/i.test(tail)) {
+  if (/(message|prompt|ask|what do you want|type a message|send a message|enter prompt|write your request|new message)/i.test(recentLines)) {
+    return 'prompt';
+  }
+  if (/(^|\n)\s*(?:>|›|❯)\s*$/.test(tail)) {
     return 'prompt';
   }
   return 'unknown';
@@ -551,6 +717,7 @@ const isControlInput = (data) => (
 
 const printTuiBlock = (prompt, evaluation) => {
   const { post } = recordBlocked(prompt, evaluation);
+  playAudioCue('prompt-blocked', 'OpenCode did not receive that prompt. Rewrite it with receipts.');
   process.stdout.write('\r\n');
   line(color('KAREN INTERCEPTED THAT TUI PROMPT', 'red'));
   line(color(`Verdict: BLOCKED ${evaluation.score}/100`, 'red'));
@@ -603,6 +770,7 @@ const proxyOpencodeTuiIntercept = (args = []) => new Promise((resolve) => {
     }
     for (const char of data) {
       if (char === '\u0003' || char === '\u0004') {
+        inputBuffer = '';
         child.write(char);
         continue;
       }
@@ -824,6 +992,8 @@ const teachAfterDiscard = ({ prompt, generatedDiff, reason }) => {
 const parseDiff = (diff) => {
   const files = [];
   let current = null;
+  let oldLine = 0;
+  let newLine = 0;
   const addedSymbols = new Set();
   const removedSymbols = new Set();
   let additions = 0;
@@ -839,7 +1009,11 @@ const parseDiff = (diff) => {
         hunks: [],
         addedLines: [],
         removedLines: [],
+        addedLineNumbers: [],
+        removedLineNumbers: [],
       };
+      oldLine = 0;
+      newLine = 0;
       files.push(current);
       continue;
     }
@@ -847,6 +1021,9 @@ const parseDiff = (diff) => {
     if (!current) continue;
     if (diffLine.startsWith('@@')) {
       const label = diffLine.replace(/^@@[^@]*@@\s*/, '').trim();
+      const match = diffLine.match(/^@@\s+-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@/);
+      oldLine = Number(match?.[1] || 0);
+      newLine = Number(match?.[2] || 0);
       current.hunks.push(label || current.path);
       continue;
     }
@@ -856,13 +1033,20 @@ const parseDiff = (diff) => {
       additions += 1;
       current.additions += 1;
       if (value) current.addedLines.push(value);
+      if (newLine > 0) current.addedLineNumbers.push(newLine);
+      newLine += 1;
       for (const symbol of extractSymbols(value)) addedSymbols.add(symbol);
     } else if (diffLine.startsWith('-') && !diffLine.startsWith('---')) {
       const value = diffLine.slice(1).trim();
       deletions += 1;
       current.deletions += 1;
       if (value) current.removedLines.push(value);
+      if (oldLine > 0) current.removedLineNumbers.push(oldLine);
+      oldLine += 1;
       for (const symbol of extractSymbols(value)) removedSymbols.add(symbol);
+    } else if (diffLine.startsWith(' ') || diffLine === '') {
+      oldLine += 1;
+      newLine += 1;
     }
   }
 
@@ -913,6 +1097,29 @@ const nodeName = (node) => {
 
 const hasExportModifier = (node) => Boolean(ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Export);
 
+const lineNumberForPosition = (source, position) => source.getLineAndCharacterOfPosition(position).line + 1;
+
+const changedLineSetForFile = (file) => new Set([
+  ...file.addedLineNumbers,
+  ...file.removedLineNumbers,
+]);
+
+const nodeTouchesChangedLines = (source, node, changedLines) => {
+  if (!changedLines || changedLines.size === 0) return true;
+  const start = lineNumberForPosition(source, node.getStart(source));
+  const end = lineNumberForPosition(source, node.getEnd());
+  for (let lineNumber = start; lineNumber <= end; lineNumber += 1) {
+    if (changedLines.has(lineNumber)) return true;
+  }
+  return false;
+};
+
+const addEvidence = (target, key, value, evidence) => {
+  if (!value) return;
+  target[key].add(value);
+  if (!target.evidence.has(value)) target.evidence.set(value, evidence);
+};
+
 const parseJavaScriptImpact = ({ cwd, file }) => {
   if (!cwd || !isJavaScriptLikeFile(file.path)) return null;
   const absolutePath = path.join(cwd, file.path);
@@ -929,8 +1136,12 @@ const parseJavaScriptImpact = ({ cwd, file }) => {
   const functions = new Set();
   const imports = new Set();
   const calls = new Set();
+  const evidence = new Map();
+  const changedLines = changedLineSetForFile(file);
+  const buckets = { exports, functions, imports, calls, evidence };
 
   const visit = (node) => {
+    const touchesChange = nodeTouchesChangedLines(source, node, changedLines);
     if (
       ts.isFunctionDeclaration(node)
       || ts.isClassDeclaration(node)
@@ -939,17 +1150,19 @@ const parseJavaScriptImpact = ({ cwd, file }) => {
       || ts.isEnumDeclaration(node)
     ) {
       const name = nodeName(node);
-      if (name) {
-        functions.add(name);
-        if (hasExportModifier(node)) exports.add(name);
+      if (name && touchesChange) {
+        const lineNumber = lineNumberForPosition(source, node.getStart(source));
+        addEvidence(buckets, 'functions', name, `${file.path}:${lineNumber}`);
+        if (hasExportModifier(node)) addEvidence(buckets, 'exports', name, `${file.path}:${lineNumber}`);
       }
     }
 
-    if (ts.isVariableStatement(node)) {
+    if (ts.isVariableStatement(node) && touchesChange) {
       const exported = hasExportModifier(node);
       for (const declaration of node.declarationList.declarations) {
         const name = nodeName(declaration);
         if (!name) continue;
+        const lineNumber = lineNumberForPosition(source, declaration.getStart(source));
         if (
           declaration.initializer
           && (
@@ -958,24 +1171,28 @@ const parseJavaScriptImpact = ({ cwd, file }) => {
             || ts.isClassExpression(declaration.initializer)
           )
         ) {
-          functions.add(name);
+          addEvidence(buckets, 'functions', name, `${file.path}:${lineNumber}`);
         }
-        if (exported) exports.add(name);
+        if (exported) addEvidence(buckets, 'exports', name, `${file.path}:${lineNumber}`);
       }
     }
 
-    if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
-      imports.add(node.moduleSpecifier.text);
+    if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier) && touchesChange) {
+      addEvidence(buckets, 'imports', node.moduleSpecifier.text, `${file.path}:${lineNumberForPosition(source, node.getStart(source))}`);
     }
 
-    if (ts.isExportDeclaration(node) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
-      imports.add(node.moduleSpecifier.text);
+    if (ts.isExportDeclaration(node) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier) && touchesChange) {
+      addEvidence(buckets, 'imports', node.moduleSpecifier.text, `${file.path}:${lineNumberForPosition(source, node.getStart(source))}`);
     }
 
-    if (ts.isCallExpression(node)) {
+    if (ts.isCallExpression(node) && touchesChange) {
       const expression = node.expression;
-      if (ts.isIdentifier(expression)) calls.add(expression.text);
-      if (ts.isPropertyAccessExpression(expression)) calls.add(expression.name.text);
+      const callName = ts.isIdentifier(expression)
+        ? expression.text
+        : ts.isPropertyAccessExpression(expression)
+          ? expression.name.text
+          : '';
+      addEvidence(buckets, 'calls', callName, `${file.path}:${lineNumberForPosition(source, node.getStart(source))}`);
     }
 
     ts.forEachChild(node, visit);
@@ -989,6 +1206,7 @@ const parseJavaScriptImpact = ({ cwd, file }) => {
     functions: [...functions],
     imports: [...imports],
     calls: [...calls],
+    evidence: Object.fromEntries(evidence.entries()),
   };
 };
 
@@ -1001,6 +1219,7 @@ const analyzeDiffImpact = (summary, { cwd = null } = {}) => {
   const importedModules = [];
   const calledSymbols = [];
   const parsedFiles = [];
+  const evidence = new Map();
 
   for (const file of summary.files) {
     const astImpact = parseJavaScriptImpact({ cwd, file });
@@ -1010,6 +1229,9 @@ const analyzeDiffImpact = (summary, { cwd = null } = {}) => {
       changedFunctions.push(...astImpact.functions);
       importedModules.push(...astImpact.imports);
       calledSymbols.push(...astImpact.calls);
+      for (const [key, value] of Object.entries(astImpact.evidence || {})) {
+        if (!evidence.has(key)) evidence.set(key, value);
+      }
       if (!isTestFile(file.path) && astImpact.calls.length > 0) {
         callSiteFiles.push(file.path);
       }
@@ -1039,6 +1261,7 @@ const analyzeDiffImpact = (summary, { cwd = null } = {}) => {
     importedModules: [...new Set(importedModules)],
     calledSymbols: [...new Set(calledSymbols)],
     parsedFiles: [...new Set(parsedFiles)],
+    evidence,
   };
 };
 
@@ -1052,18 +1275,222 @@ const uniqueOptions = (...groups) => {
   });
 };
 
-const makeQuestion = (promptText, correct, distractors) => {
+const makeQuestion = (promptText, correct, distractors, evidence = '') => {
   const options = uniqueOptions([correct], distractors).slice(0, 4);
   const fallback = ['package.json', 'README.md', 'no tracked diff', 'only formatting'];
   while (options.length < 4) {
     options.push(fallback[options.length - 1] || 'none');
   }
-  return { prompt: promptText, options, answer: 0 };
+  return { prompt: promptText, options, answer: 0, evidence, source: 'parser' };
 };
 
-const buildQuiz = ({ prompt, generatedDiff, cwd = null }) => {
-  const summary = parseDiff(generatedDiff);
-  const impact = analyzeDiffImpact(summary, { cwd });
+const getOpenAiApiKey = () => {
+  const value = process.env.OPENAI_API_KEY;
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : '';
+};
+
+const quizAiAllowed = () => envEnabled('KAREN_QUIZ_AI', Boolean(getOpenAiApiKey())) && Boolean(getOpenAiApiKey());
+const quizModel = () => process.env.KAREN_QUIZ_MODEL || 'gpt-5.5';
+const quizReasoningEffort = () => process.env.KAREN_QUIZ_REASONING_EFFORT || 'high';
+const quizTimeoutMs = () => {
+  const parsed = Number(process.env.KAREN_QUIZ_TIMEOUT_MS || 25000);
+  return Number.isFinite(parsed) ? Math.max(3000, Math.trunc(parsed)) : 25000;
+};
+
+const truncateForModel = (value, maxLength) => {
+  const text = String(value || '');
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength)}\n...[truncated ${text.length - maxLength} chars]`;
+};
+
+const buildQuizEvidencePack = ({ prompt, summary, impact }) => {
+  const files = summary.files.map((file) => ({
+    path: file.path,
+    additions: file.additions,
+    deletions: file.deletions,
+    hunks: file.hunks.slice(0, 8),
+    addedLineNumbers: file.addedLineNumbers.slice(0, 16),
+    removedLineNumbers: file.removedLineNumbers.slice(0, 16),
+    addedLines: file.addedLines.slice(0, 14).map((lineText) => truncateForModel(lineText, 220)),
+    removedLines: file.removedLines.slice(0, 10).map((lineText) => truncateForModel(lineText, 220)),
+  }));
+
+  return {
+    prompt: redactPublicText(prompt, 1200),
+    diffStats: {
+      filesChanged: summary.files.length,
+      additions: summary.additions,
+      deletions: summary.deletions,
+    },
+    files,
+    parserFindings: {
+      parsedFiles: impact.parsedFiles,
+      exportedSymbols: impact.exportedSymbols,
+      changedFunctions: impact.changedFunctions,
+      importedModules: impact.importedModules,
+      calledSymbols: impact.calledSymbols,
+      testFiles: impact.testFiles,
+      configFiles: impact.configFiles,
+      callSiteFiles: impact.callSiteFiles,
+      evidence: Object.fromEntries(impact.evidence.entries()),
+    },
+  };
+};
+
+const quizResponseSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['questions'],
+  properties: {
+    questions: {
+      type: 'array',
+      minItems: 3,
+      maxItems: 5,
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['prompt', 'options', 'answer', 'evidence', 'why_it_matters'],
+        properties: {
+          prompt: { type: 'string', minLength: 12, maxLength: 180 },
+          options: {
+            type: 'array',
+            minItems: 4,
+            maxItems: 4,
+            items: { type: 'string', minLength: 1, maxLength: 180 },
+          },
+          answer: { type: 'integer', minimum: 0, maximum: 3 },
+          evidence: { type: 'string', minLength: 1, maxLength: 180 },
+          why_it_matters: { type: 'string', minLength: 8, maxLength: 220 },
+        },
+      },
+    },
+  },
+};
+
+const normalizeAiQuizQuestion = (question) => {
+  const promptText = typeof question?.prompt === 'string' ? question.prompt.trim() : '';
+  const options = Array.isArray(question?.options)
+    ? question.options.map((option) => String(option || '').trim()).filter(Boolean)
+    : [];
+  const answer = Number(question?.answer);
+  const evidence = typeof question?.evidence === 'string' ? question.evidence.trim() : '';
+  const why = typeof question?.why_it_matters === 'string' ? question.why_it_matters.trim() : '';
+  if (!promptText || options.length !== 4 || !Number.isInteger(answer) || answer < 0 || answer > 3) return null;
+  if (new Set(options).size !== 4) return null;
+  return {
+    prompt: promptText,
+    options,
+    answer,
+    evidence,
+    why,
+    source: 'ai',
+  };
+};
+
+const extractResponseText = (payload) => {
+  if (typeof payload?.output_text === 'string') return payload.output_text;
+  const chunks = [];
+  for (const item of payload?.output || []) {
+    for (const content of item?.content || []) {
+      if (typeof content?.text === 'string') chunks.push(content.text);
+      if (typeof content?.json === 'object') return JSON.stringify(content.json);
+    }
+  }
+  return chunks.join('\n');
+};
+
+const parseModelJson = (text) => {
+  const trimmed = String(text || '').trim();
+  if (!trimmed) return null;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    const match = trimmed.match(/\{[\s\S]*\}/);
+    if (!match) return null;
+    try {
+      return JSON.parse(match[0]);
+    } catch {
+      return null;
+    }
+  }
+};
+
+const buildAiQuiz = async ({ prompt, generatedDiff, summary, impact }) => {
+  if (!quizAiAllowed()) return null;
+  const apiKey = getOpenAiApiKey();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), quizTimeoutMs());
+  const evidencePack = buildQuizEvidencePack({ prompt, summary, impact });
+  const input = [
+    {
+      role: 'system',
+      content: [
+        {
+          type: 'input_text',
+          text: [
+            'You are Karen, a strict code-review quizmaster.',
+            'Generate multiple-choice questions that prove the developer read the generated diff.',
+            'Questions must be grounded only in the evidence pack. Do not ask trivia, style opinions, or generic programming questions.',
+            'Prefer questions about changed behavior, touched functions, exported APIs, imports, call sites, config/test impact, and rollback risk.',
+            'Make wrong options plausible but clearly contradicted by evidence.',
+            'Return JSON only.',
+          ].join(' '),
+        },
+      ],
+    },
+    {
+      role: 'user',
+      content: [
+        {
+          type: 'input_text',
+          text: JSON.stringify({
+            requiredQuestionCount: 5,
+            evidencePack,
+            diffExcerpt: truncateForModel(generatedDiff, 16000),
+          }),
+        },
+      ],
+    },
+  ];
+
+  try {
+    const response = await fetch('https://api.openai.com/v1/responses', {
+      method: 'POST',
+      signal: controller.signal,
+      headers: {
+        authorization: `Bearer ${apiKey}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: quizModel(),
+        reasoning: { effort: quizReasoningEffort() },
+        input,
+        text: {
+          format: {
+            type: 'json_schema',
+            name: 'karen_quiz',
+            schema: quizResponseSchema,
+            strict: true,
+          },
+        },
+      }),
+    });
+    if (!response.ok) {
+      const detail = await response.text().catch(() => '');
+      throw new Error(`OpenAI quiz request failed ${response.status}: ${detail.slice(0, 260)}`);
+    }
+    const payload = await response.json();
+    const parsed = parseModelJson(extractResponseText(payload));
+    const questions = Array.isArray(parsed?.questions)
+      ? parsed.questions.map(normalizeAiQuizQuestion).filter(Boolean)
+      : [];
+    return questions.length >= 3 ? questions.slice(0, 5) : null;
+  } finally {
+    clearTimeout(timeout);
+  }
+};
+
+const buildParserQuiz = ({ prompt, summary, impact }) => {
   const files = summary.files;
   const topFile = [...files].sort((a, b) => (b.additions + b.deletions) - (a.additions + a.deletions))[0];
   const shape = summary.additions >= summary.deletions ? 'more additions than deletions' : 'more deletions than additions';
@@ -1076,6 +1503,7 @@ const buildQuiz = ({ prompt, generatedDiff, cwd = null }) => {
       files.length === 1 ? 'Which file did Karen change?' : 'Which file changed the most?',
       topFile.path,
       files.filter((file) => file.path !== topFile.path).map((file) => file.path).concat(['package.json', 'README.md', 'src/index.ts']),
+      `${topFile.path}: +${topFile.additions} -${topFile.deletions}`,
     ));
   }
 
@@ -1098,12 +1526,14 @@ const buildQuiz = ({ prompt, generatedDiff, cwd = null }) => {
       'Parser check: which exported API exists in a changed file?',
       impact.exportedSymbols[0],
       uniqueOptions(impact.changedFunctions.slice(1), ['renderView', 'loadConfig', 'handleSubmit']),
+      impact.evidence.get(impact.exportedSymbols[0]) || '',
     ));
   } else if (impact.changedFunctions.length > 0) {
     questions.push(makeQuestion(
       'Parser check: which function or type should you explain before approval?',
       impact.changedFunctions[0],
       uniqueOptions(impact.changedFunctions.slice(1), ['setupClient', 'parseArgs', 'syncState']),
+      impact.evidence.get(impact.changedFunctions[0]) || '',
     ));
   }
 
@@ -1112,12 +1542,14 @@ const buildQuiz = ({ prompt, generatedDiff, cwd = null }) => {
       'Parser check: which imported module is present in a changed file?',
       impact.importedModules[0],
       uniqueOptions(['react', 'node:fs', './missing'], impact.importedModules.slice(1)),
+      impact.evidence.get(impact.importedModules[0]) || '',
     ));
   } else if (impact.calledSymbols.length > 0) {
     questions.push(makeQuestion(
       'Parser check: which call appears in a changed file?',
       impact.calledSymbols[0],
       uniqueOptions(impact.calledSymbols.slice(1), ['render', 'fetch', 'setState']),
+      impact.evidence.get(impact.calledSymbols[0]) || '',
     ));
   }
 
@@ -1164,14 +1596,39 @@ const buildQuiz = ({ prompt, generatedDiff, cwd = null }) => {
   return questions.slice(0, 5);
 };
 
+const buildQuiz = async ({ prompt, generatedDiff, cwd = null }) => {
+  const summary = parseDiff(generatedDiff);
+  const impact = analyzeDiffImpact(summary, { cwd });
+  const parserQuestions = buildParserQuiz({ prompt, summary, impact });
+
+  try {
+    const aiQuestions = await buildAiQuiz({ prompt, generatedDiff, summary, impact });
+    if (aiQuestions?.length >= 3) {
+      return {
+        questions: aiQuestions,
+        source: `ai:${quizModel()}`,
+      };
+    }
+  } catch (error) {
+    line(color(`Karen AI quiz fell back to parser questions: ${error instanceof Error ? error.message : 'unknown error'}`, 'amber'));
+  }
+
+  return {
+    questions: parserQuestions,
+    source: 'parser',
+  };
+};
+
 const runQuiz = async ({ prompt, generatedDiff, cwd = null }) => {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  const questions = buildQuiz({ prompt, generatedDiff, cwd });
+  const quiz = await buildQuiz({ prompt, generatedDiff, cwd });
+  const questions = quiz.questions;
   const stopMusic = startQuizMusic();
   playAudioCue('quiz-start');
   line('');
   line(color('CODE READ CHECK', 'pink'));
   line(color('Kahoot mode. Answer from the diff Karen is about to promote. Audio uses terminal bells by default.', 'gray'));
+  line(color(`Quiz source: ${quiz.source}`, 'gray'));
 
   try {
     for (let index = 0; index < questions.length; index += 1) {
@@ -1179,6 +1636,12 @@ const runQuiz = async ({ prompt, generatedDiff, cwd = null }) => {
       playAudioCue('quiz-question');
       line('');
       line(color(`Question ${index + 1}/${questions.length}: ${question.prompt}`, 'cyan'));
+      if (question.evidence) {
+        line(color(`Evidence: ${question.evidence}`, 'gray'));
+      }
+      if (question.why) {
+        line(color(`Why it matters: ${question.why}`, 'gray'));
+      }
       const blocks = [ansi.bgRed, ansi.bgBlue, ansi.bgYellow, ansi.bgGreen];
       question.options.forEach((option, optionIndex) => {
         const block = process.stdout.isTTY ? blocks[optionIndex % blocks.length] : '';
@@ -1211,7 +1674,9 @@ const printAudioStatus = () => {
   line(`  KAREN_MUSIC=${musicAllowed() ? 'on' : 'off'}       quiz beat using terminal bell rhythm`);
   line(`  KAREN_SYSTEM_AUDIO=${systemAudioAllowed() ? 'on' : 'off'} optional OS beep`);
   line(`  KAREN_SAY=${speechAllowed() ? 'on' : 'off'}         optional local system voice`);
-  line(color('Examples: KAREN_AUDIO=0 karen, KAREN_MUSIC=0 karen, KAREN_SAY=1 karen', 'gray'));
+  line(`  KAREN_ELEVENLABS_AUDIO=${elevenLabsTerminalAllowed() ? 'on' : 'off'} ElevenLabs terminal clips with local cache`);
+  line(`  KAREN_ELEVENLABS_DAILY_CAP=${terminalAudioCap()} character-unit daily cap for fresh audio calls`);
+  line(color('Examples: KAREN_AUDIO=0 karen, KAREN_MUSIC=0 karen, KAREN_SAY=1 karen, KAREN_ELEVENLABS_AUDIO=0 karen', 'gray'));
 };
 
 const printHelp = () => {
@@ -1409,7 +1874,24 @@ const main = async () => {
   line(color('Karen dismissed.', 'gray'));
 };
 
-main().catch((error) => {
-  line(color(error instanceof Error ? error.message : String(error), 'red'));
-  process.exitCode = 1;
-});
+export const __karenTest = {
+  analyzeDiffImpact,
+  buildAiQuiz,
+  buildParserQuiz,
+  buildQuiz,
+  classifyTuiContext,
+  parseDiff,
+  shouldJudgeTuiBuffer,
+  updateTuiBuffer,
+};
+
+const isCliEntry = process.argv[1]
+  ? import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href
+  : false;
+
+if (isCliEntry) {
+  main().catch((error) => {
+    line(color(error instanceof Error ? error.message : String(error), 'red'));
+    process.exitCode = 1;
+  });
+}

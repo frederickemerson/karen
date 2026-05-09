@@ -18,10 +18,18 @@ import {
   buildKarenRoast,
   cancelKarenVoicePreview,
   createElevenLabsConfigPreview,
+  fetchKarenElevenLabsStatus,
+  fetchKarenElevenLabsUsage,
+  fetchKarenElevenLabsVoices,
   isKarenBrowserVoiceSupported,
   normalizeKarenVoiceSettings,
+  playKarenSoundEffect,
+  speakKarenElevenLabsPreview,
   speakKarenVoicePreview,
   waitForKarenSpeechVoices,
+  type KarenElevenLabsStatus,
+  type KarenElevenLabsUsage,
+  type KarenElevenLabsVoice,
   type KarenVoiceMood,
   type KarenVoiceProvider,
   type KarenVoiceSettings,
@@ -35,8 +43,23 @@ const moodOptions: Array<{ value: KarenVoiceMood; label: string; helper: string 
 
 const providerOptions: Array<{ value: KarenVoiceProvider; label: string; helper: string }> = [
   { value: 'browser', label: 'Browser preview', helper: 'Local Web Speech API. Zero network, maximum scolding.' },
-  { value: 'elevenlabs-ready', label: 'ElevenLabs ready', helper: 'Config placeholders only. Karen does not touch your secret keys.' },
+  { value: 'elevenlabs', label: 'ElevenLabs live', helper: 'Server-side API calls. Voice, gavel stings, and rollback audio.' },
 ];
+
+const karenSoundEffects = [
+  {
+    label: 'Gavel smack',
+    prompt: 'sharp courtroom gavel hit, dry wood crack, tiny dramatic room tail',
+  },
+  {
+    label: 'Rollback siren',
+    prompt: 'retro arcade failure sting with a short warning buzzer and descending synth bloop',
+  },
+  {
+    label: 'Badge unlock',
+    prompt: 'cute 8-bit achievement unlock sparkle, warm and victorious, very short',
+  },
+] as const;
 
 const formatPercent = (value: number) => `${Math.round(value * 100)}%`;
 
@@ -59,8 +82,12 @@ const readInitialSettings = (): KarenVoiceSettings => {
 export const GrandmaVoicePanel: React.FC<{ className?: string }> = ({ className }) => {
   const [settings, setSettings] = React.useState<KarenVoiceSettings>(() => readInitialSettings());
   const [voices, setVoices] = React.useState<SpeechSynthesisVoice[]>([]);
+  const [elevenLabsStatus, setElevenLabsStatus] = React.useState<KarenElevenLabsStatus | null>(null);
+  const [elevenLabsUsage, setElevenLabsUsage] = React.useState<KarenElevenLabsUsage | null>(null);
+  const [elevenLabsVoices, setElevenLabsVoices] = React.useState<KarenElevenLabsVoice[]>([]);
   const [previewText, setPreviewText] = React.useState(() => buildKarenRoast(DEFAULT_KAREN_VOICE_SETTINGS.mood, 1));
   const [isPlaying, setIsPlaying] = React.useState(false);
+  const [isLoadingVoices, setIsLoadingVoices] = React.useState(false);
   const [status, setStatus] = React.useState<string>('');
   const browserSupported = isKarenBrowserVoiceSupported();
 
@@ -97,13 +124,62 @@ export const GrandmaVoicePanel: React.FC<{ className?: string }> = ({ className 
     window.localStorage.setItem(KAREN_VOICE_STORAGE_KEY, JSON.stringify(settings));
   }, [settings]);
 
+  React.useEffect(() => {
+    let cancelled = false;
+    fetchKarenElevenLabsStatus()
+      .then((nextStatus) => {
+        if (cancelled) return;
+        setElevenLabsStatus(nextStatus);
+        setElevenLabsUsage(nextStatus.usage ?? null);
+        setSettings((current) => {
+          if (current.elevenLabsVoiceId && current.elevenLabsVoiceId !== DEFAULT_KAREN_VOICE_SETTINGS.elevenLabsVoiceId) {
+            return current;
+          }
+          return normalizeKarenVoiceSettings({ ...current, elevenLabsVoiceId: nextStatus.defaultVoiceId });
+        });
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setStatus(error instanceof Error ? error.message : 'Could not read ElevenLabs status.');
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const updateSettings = React.useCallback((patch: Partial<KarenVoiceSettings>) => {
     setSettings((current) => normalizeKarenVoiceSettings({ ...current, ...patch }));
+  }, []);
+
+  const refreshUsage = React.useCallback(async () => {
+    try {
+      setElevenLabsUsage(await fetchKarenElevenLabsUsage());
+    } catch {
+      // Usage is a dashboard nicety; audio controls still work without it.
+    }
   }, []);
 
   const elevenLabsConfig = React.useMemo(() => createElevenLabsConfigPreview(settings), [settings]);
   const activeMood = moodOptions.find((option) => option.value === settings.mood) ?? moodOptions[1];
   const activeProvider = providerOptions.find((option) => option.value === settings.provider) ?? providerOptions[0];
+  const elevenLabsConfigured = elevenLabsStatus?.configured === true;
+
+  const loadElevenLabsVoices = React.useCallback(async () => {
+    setIsLoadingVoices(true);
+    setStatus('Asking ElevenLabs who can play Karen...');
+    try {
+      const nextVoices = await fetchKarenElevenLabsVoices();
+      setElevenLabsVoices(nextVoices);
+      setStatus(nextVoices.length > 0
+        ? `Loaded ${nextVoices.length} ElevenLabs voices. Pick the sternest one.`
+        : 'ElevenLabs returned no voices. Karen is judging the casting department.');
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : 'Could not load ElevenLabs voices.');
+    } finally {
+      setIsLoadingVoices(false);
+    }
+  }, []);
 
   const handlePreview = React.useCallback(async () => {
     if (isPlaying) {
@@ -114,16 +190,23 @@ export const GrandmaVoicePanel: React.FC<{ className?: string }> = ({ className 
     }
 
     setIsPlaying(true);
-    setStatus(settings.provider === 'elevenlabs-ready'
-      ? 'Previewing with browser speech. ElevenLabs config is staged, not called.'
+    setStatus(settings.provider === 'elevenlabs'
+      ? 'Calling ElevenLabs. Karen is putting on her courtroom cardigan.'
       : 'Grandma is clearing her throat.');
 
-    const result = await speakKarenVoicePreview(previewText, settings);
+    const result = settings.provider === 'elevenlabs'
+      ? await speakKarenElevenLabsPreview(previewText, settings)
+      : await speakKarenVoicePreview(previewText, settings);
+    if (settings.provider === 'elevenlabs') void refreshUsage();
     setIsPlaying(false);
     setStatus(result.ok
-      ? 'Preview complete. The prompt has been emotionally processed.'
+      ? result.cacheHit
+        ? 'Preview complete from cache. Zero fresh credits burned.'
+        : result.characterCost
+          ? `Preview complete. ElevenLabs billed ${result.characterCost} character units.`
+        : 'Preview complete. The prompt has been emotionally processed.'
       : result.reason || 'Preview failed before Karen could judge anyone.');
-  }, [isPlaying, previewText, settings]);
+  }, [isPlaying, previewText, refreshUsage, settings]);
 
   const randomizeRoast = React.useCallback(() => {
     setPreviewText(buildKarenRoast(settings.mood, Date.now()));
@@ -139,6 +222,25 @@ export const GrandmaVoicePanel: React.FC<{ className?: string }> = ({ className 
     }
   }, [elevenLabsConfig]);
 
+  const playSoundEffect = React.useCallback(async (prompt: string) => {
+    setIsPlaying(true);
+    setStatus('Generating Karen courtroom sound design...');
+    const result = await playKarenSoundEffect(prompt, { demoMode: settings.elevenLabsDemoMode });
+    void refreshUsage();
+    setIsPlaying(false);
+    setStatus(result.ok
+      ? result.cacheHit
+        ? 'Sound effect played from cache. Karen approves of fiscal discipline.'
+        : result.characterCost
+          ? `Sound effect played. ElevenLabs billed ${result.characterCost} character units.`
+        : 'Sound effect played. The courtroom is now less boring.'
+      : result.reason || 'Sound effect failed.');
+  }, [refreshUsage, settings.elevenLabsDemoMode]);
+
+  const usageRatio = elevenLabsUsage && elevenLabsUsage.dailyCap > 0
+    ? Math.min(100, Math.round((elevenLabsUsage.characterCost / elevenLabsUsage.dailyCap) * 100))
+    : 0;
+
   return (
     <section className={cn('rounded-md border border-border bg-card p-4', className)}>
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -149,16 +251,22 @@ export const GrandmaVoicePanel: React.FC<{ className?: string }> = ({ className 
           </div>
           <h2 className="mt-1 text-xl font-semibold tracking-normal text-foreground">Make Karen audible, not legally actionable</h2>
           <p className="mt-2 max-w-2xl typography-body text-muted-foreground">
-            Preview roast lines locally with the browser voice engine. ElevenLabs fields are ready for a future backend handoff, but this panel sends nothing over the network.
+            Preview roast lines locally or cast Karen through the server-side ElevenLabs proxy. The proxy caches clips, tracks daily character cost, and keeps the API key off the browser.
           </p>
         </div>
         <span className={cn(
           'rounded-sm px-2 py-1 typography-micro font-medium',
-          browserSupported
+          settings.provider === 'elevenlabs'
+            ? elevenLabsConfigured
+              ? 'bg-[var(--status-success)]/15 text-[var(--status-success)]'
+              : 'bg-[var(--status-warning)]/15 text-[var(--status-warning)]'
+            : browserSupported
             ? 'bg-[var(--status-success)]/15 text-[var(--status-success)]'
             : 'bg-[var(--status-warning)]/15 text-[var(--status-warning)]',
         )}>
-          {browserSupported ? 'browser voice available' : 'browser voice unavailable'}
+          {settings.provider === 'elevenlabs'
+            ? elevenLabsConfigured ? 'ElevenLabs configured' : 'ElevenLabs needs env key'
+            : browserSupported ? 'browser voice available' : 'browser voice unavailable'}
         </span>
       </div>
 
@@ -217,6 +325,50 @@ export const GrandmaVoicePanel: React.FC<{ className?: string }> = ({ className 
             </Select>
           </label>
 
+          {settings.provider === 'elevenlabs' ? (
+            <div className="grid gap-3 rounded-md border border-[var(--status-success)]/25 bg-[var(--status-success)]/8 p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <div className="typography-ui-label text-foreground">ElevenLabs voice casting</div>
+                  <div className="typography-micro text-muted-foreground">
+                    Pick a real account voice, or use the server default voice ID.
+                  </div>
+                </div>
+                <Button type="button" variant="outline" onClick={loadElevenLabsVoices} disabled={!elevenLabsConfigured || isLoadingVoices}>
+                  {isLoadingVoices ? 'Loading...' : 'Load voices'}
+                </Button>
+              </div>
+              {elevenLabsVoices.length > 0 ? (
+                <Select value={settings.elevenLabsVoiceId} onValueChange={(value) => updateSettings({ elevenLabsVoiceId: value })}>
+                  <SelectTrigger className="h-9 w-full justify-between">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {elevenLabsVoices.map((voice) => (
+                      <SelectItem key={voice.voiceId} value={voice.voiceId}>
+                        {voice.name} {voice.labels?.age ? `· ${voice.labels.age}` : ''}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : null}
+              <label className="flex items-start gap-3 rounded-md border border-border bg-background/50 p-3">
+                <input
+                  type="checkbox"
+                  checked={settings.elevenLabsDemoMode}
+                  onChange={(event) => updateSettings({ elevenLabsDemoMode: event.target.checked })}
+                  className="mt-1"
+                />
+                <span>
+                  <span className="block typography-ui-label text-foreground">Demo mode</span>
+                  <span className="block typography-micro text-muted-foreground">
+                    Use browser voice and tiny local blips for demos without spending ElevenLabs credits.
+                  </span>
+                </span>
+              </label>
+            </div>
+          ) : null}
+
           <label className="grid gap-2">
             <span className="typography-ui-label text-foreground">Preview line</span>
             <Textarea
@@ -235,14 +387,37 @@ export const GrandmaVoicePanel: React.FC<{ className?: string }> = ({ className 
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <Button type="button" onClick={handlePreview} disabled={!browserSupported && !isPlaying}>
+            <Button
+              type="button"
+              onClick={handlePreview}
+              disabled={settings.provider === 'elevenlabs' ? !elevenLabsConfigured || isPlaying : (!browserSupported && !isPlaying)}
+            >
               {isPlaying ? <RiStopLine className="size-4" /> : <RiPlayLine className="size-4" />}
-              {isPlaying ? 'Stop roast' : 'Preview roast'}
+              {isPlaying ? 'Stop roast' : settings.provider === 'elevenlabs' ? 'Generate roast' : 'Preview roast'}
             </Button>
             <Button type="button" variant="outline" onClick={randomizeRoast}>
               New insult
             </Button>
           </div>
+
+          {settings.provider === 'elevenlabs' ? (
+            <div className="grid gap-2 rounded-md border border-border bg-background/50 p-3">
+              <div className="typography-ui-label text-foreground">Courtroom soundboard</div>
+              <div className="flex flex-wrap gap-2">
+                {karenSoundEffects.map((effect) => (
+                  <Button
+                    key={effect.label}
+                    type="button"
+                    variant="outline"
+                    onClick={() => playSoundEffect(effect.prompt)}
+                    disabled={!elevenLabsConfigured || isPlaying}
+                  >
+                    {effect.label}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          ) : null}
 
           {status ? <div className="typography-micro text-muted-foreground">{status}</div> : null}
         </div>
@@ -251,7 +426,7 @@ export const GrandmaVoicePanel: React.FC<{ className?: string }> = ({ className 
           <div>
             <div className="typography-ui-label text-foreground">{KAREN_ELEVENLABS_PLACEHOLDER.label}</div>
             <p className="mt-1 typography-micro text-muted-foreground">
-              Placeholder only: {KAREN_ELEVENLABS_PLACEHOLDER.endpointTemplate}
+              Server proxy: {KAREN_ELEVENLABS_PLACEHOLDER.endpointTemplate}
             </p>
           </div>
 
@@ -277,11 +452,42 @@ export const GrandmaVoicePanel: React.FC<{ className?: string }> = ({ className 
           <VoiceSlider label="Similarity" value={settings.elevenLabsSimilarityBoost} min={0} max={1} step={0.01} onChange={(elevenLabsSimilarityBoost) => updateSettings({ elevenLabsSimilarityBoost })} formatter={formatPercent} />
           <VoiceSlider label="Style" value={settings.elevenLabsStyle} min={0} max={1} step={0.01} onChange={(elevenLabsStyle) => updateSettings({ elevenLabsStyle })} formatter={formatPercent} />
 
+          {elevenLabsUsage ? (
+            <div className="rounded-md border border-border bg-card p-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="typography-micro font-medium text-foreground">Daily audio budget</div>
+                  <div className="mt-1 typography-micro text-muted-foreground">
+                    {elevenLabsUsage.characterCost.toLocaleString()} / {elevenLabsUsage.dailyCap.toLocaleString()} character units · {elevenLabsUsage.requests.toLocaleString()} fresh API calls
+                  </div>
+                </div>
+                <span className="rounded-sm bg-muted px-2 py-1 typography-micro text-muted-foreground">
+                  {elevenLabsUsage.demoMode || settings.elevenLabsDemoMode ? 'demo mode' : elevenLabsUsage.cacheEnabled ? 'cache on' : 'cache off'}
+                </span>
+              </div>
+              <div className="mt-3 h-2 overflow-hidden rounded-full bg-muted">
+                <div className="h-full bg-primary" style={{ width: `${usageRatio}%` }} />
+              </div>
+            </div>
+          ) : null}
+
           <div className="rounded-md bg-muted/40 p-3">
             <div className="typography-micro font-medium text-foreground">Secret handling</div>
             <p className="mt-1 typography-micro text-muted-foreground">
-              Use {KAREN_ELEVENLABS_PLACEHOLDER.requiredSecret} on a server later. This browser panel stores no key and makes no API call.
+              Use {KAREN_ELEVENLABS_PLACEHOLDER.requiredSecret} on the server. This browser panel never stores or receives the key.
             </p>
+          </div>
+
+          <div className="grid gap-2">
+            {(elevenLabsStatus?.features ?? []).map((feature) => (
+              <div key={feature.id} className="rounded-md border border-border bg-card p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="typography-micro font-medium text-foreground">{feature.label}</div>
+                  <span className="rounded-sm bg-muted px-2 py-0.5 typography-micro text-muted-foreground">{feature.status}</span>
+                </div>
+                <p className="mt-1 typography-micro text-muted-foreground">{feature.detail}</p>
+              </div>
+            ))}
           </div>
 
           <pre className="max-h-48 overflow-auto rounded-md bg-card p-3 font-mono text-xs text-muted-foreground">

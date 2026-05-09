@@ -152,7 +152,7 @@ export const KarenReplayTape: React.FC<KarenReplayTapeProps> = ({
   };
 
   return (
-    <section className={cn('rounded-md border border-border bg-card p-4 sm:p-5', className)}>
+    <section className={cn('overflow-hidden rounded-md border border-border bg-card p-4 sm:p-5', className)}>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex min-w-0 items-start gap-3">
           <KarenLogo className="size-14 shrink-0" mood={outcome === 'deleted' ? 'mad' : 'calm'} />
@@ -192,8 +192,8 @@ export const KarenReplayTape: React.FC<KarenReplayTapeProps> = ({
         </div>
       </div>
 
-      <div className="mt-5 grid gap-4 lg:grid-cols-[1fr_280px]">
-        <div className="rounded-md border border-border bg-background p-4">
+      <div className="mt-5 grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
+        <div className="min-w-0 rounded-md border border-border bg-background p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <div className="typography-ui-label text-foreground">Tape controls</div>
@@ -201,7 +201,7 @@ export const KarenReplayTape: React.FC<KarenReplayTapeProps> = ({
                 Fake controls only. Backend recording is not wired.
               </div>
             </div>
-            <div className="flex rounded-md border border-border bg-card p-1">
+            <div className="flex shrink-0 rounded-md border border-border bg-card p-1">
               {speedOptions.map((option) => (
                 <button
                   key={option}
@@ -218,7 +218,7 @@ export const KarenReplayTape: React.FC<KarenReplayTapeProps> = ({
             </div>
           </div>
 
-          <div className="mt-5 overflow-x-auto pb-2">
+          <div className="mt-5 max-w-full overflow-x-auto pb-2">
             <div className="flex min-w-[560px] gap-2">
               {replaySteps.map((step, index) => (
                 <button
