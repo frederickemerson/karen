@@ -55,6 +55,8 @@ const envEnabled = (name, defaultValue = true) => {
   return !['0', 'false', 'off', 'no'].includes(String(value).trim().toLowerCase());
 };
 
+const verboseAllowed = () => envEnabled('KAREN_VERBOSE', false);
+
 const karenAvatar = [
   '  ░░████░░ ',
   '  ░█░░░░█░ ',
@@ -607,6 +609,7 @@ const recordBlocked = (prompt, evaluation) => store.recordBlockedPrompt({
 
 const printVerdict = (prompt, evaluation) => {
   const tone = evaluation.allowed ? 'green' : 'red';
+  if (evaluation.allowed && !verboseAllowed()) return;
   if (evaluation.intent === 'conversational') {
     line(color('Verdict: PASS — chitchat allowed (no code change requested).', tone));
     return;
@@ -933,7 +936,9 @@ const runAgent = async (prompt, session) => {
     return;
   }
 
-  line(color(`Running OpenCode in isolated worktree: ${isolated.worktreePath}`, 'cyan'));
+  if (verboseAllowed()) {
+    line(color(`Running OpenCode in isolated worktree: ${isolated.worktreePath}`, 'cyan'));
+  }
   try {
     await proxyOpencode(buildRunArgs(prompt), { cwd: isolated.runCwd });
     const generatedDiff = prepareGeneratedDiff(isolated.worktreePath);
@@ -977,7 +982,9 @@ const runAgent = async (prompt, session) => {
         rollbackTriggered: false,
         changedFiles: [],
       });
-      line(color('No generated diff detected after OpenCode finished.', 'amber'));
+      if (verboseAllowed()) {
+        line(color('No generated diff detected after OpenCode finished.', 'amber'));
+      }
     }
   } finally {
     cleanupWorktree(isolated.repoRoot, isolated.worktreePath);
@@ -1228,7 +1235,7 @@ const handleCommand = async (raw, rl) => {
   } else if (command === 'quit' || command === 'exit' || command === 'q' || command === 'bye') {
     return false;
   } else {
-    line(color(`Unknown command: /${command}`, 'red'));
+    await proxyOpencode([command, ...rest]);
   }
   return true;
 };
@@ -1251,10 +1258,18 @@ const main = async () => {
     line(color('Karen dismissed.', 'gray'));
     process.exit(0);
   });
-  drawShell();
+
   if (process.env.KAREN_SKIP_SETUP !== '1') {
     await runSetupWizard(rl);
   }
+
+  if (!initialPrompt && envEnabled('KAREN_LEGACY_SHELL', false) === false) {
+    rl.close();
+    await proxyOpencodeTuiIntercept([]);
+    return;
+  }
+
+  drawShell();
 
   const handlePrompt = async (prompt) => {
     maybeScreamAtLongPrompt(prompt);

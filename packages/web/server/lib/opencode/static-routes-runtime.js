@@ -26,36 +26,35 @@ export const createStaticRoutesRuntime = (dependencies) => {
   const registerStaticRoutes = (app) => {
     const distPath = resolveDistPath();
 
-    if (fs.existsSync(distPath)) {
-      console.log(`Serving static files from ${distPath}`);
-      app.use(express.static(distPath, {
-        setHeaders(res, filePath) {
-          // Service workers should never be long-cached; iOS is especially sensitive.
-          if (typeof filePath === 'string' && filePath.endsWith(`${path.sep}sw.js`)) {
-            res.setHeader('Cache-Control', 'no-store');
-          }
-        },
-      }));
+    if (fs.existsSync(distPath)) console.log(`Serving static files from ${distPath}`);
+    else console.warn(`Warning: ${distPath} not found yet, static files will be served after the web build finishes`);
 
-      registerPwaManifestRoute(app, {
-        process,
-        resolveProjectDirectory,
-        buildOpenCodeUrl,
-        getOpenCodeAuthHeaders,
-        readSettingsFromDiskMigrated,
-        normalizePwaAppName,
-        normalizePwaOrientation,
-      });
+    app.use(express.static(distPath, {
+      setHeaders(res, filePath) {
+        // Service workers should never be long-cached; iOS is especially sensitive.
+        if (typeof filePath === 'string' && filePath.endsWith(`${path.sep}sw.js`)) {
+          res.setHeader('Cache-Control', 'no-store');
+        }
+      },
+    }));
 
-      app.get(/^(?!\/api|.*\.(js|css|svg|png|jpg|jpeg|gif|ico|woff|woff2|ttf|eot|map)).*$/, (_req, res) => {
-        res.sendFile(path.join(distPath, 'index.html'));
-      });
-      return;
-    }
+    registerPwaManifestRoute(app, {
+      process,
+      resolveProjectDirectory,
+      buildOpenCodeUrl,
+      getOpenCodeAuthHeaders,
+      readSettingsFromDiskMigrated,
+      normalizePwaAppName,
+      normalizePwaOrientation,
+    });
 
-    console.warn(`Warning: ${distPath} not found, static files will not be served`);
     app.get(/^(?!\/api|.*\.(js|css|svg|png|jpg|jpeg|gif|ico|woff|woff2|ttf|eot|map)).*$/, (_req, res) => {
-      res.status(404).send('Static files not found. Please build the application first.');
+      const indexPath = path.join(distPath, 'index.html');
+      if (fs.existsSync(indexPath)) {
+        res.sendFile(indexPath);
+        return;
+      }
+      res.status(503).send('Static files not found. Please build the application first.');
     });
   };
 
