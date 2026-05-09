@@ -71,7 +71,7 @@ CLERK_SECRET_KEY=...
 CLERK_JWT_ISSUER_DOMAIN=...
 ```
 
-Full cloud setup: [`docs/karen-cloud.md`](docs/karen-cloud.md).
+Full cloud setup: [`docs/karen/operations/cloud.md`](docs/karen/operations/cloud.md).
 
 ## Repo layout
 
@@ -82,8 +82,10 @@ packages/web/          Express server + PromptCourt routes
   └─ server/lib/promptcourt/   evaluator, storage, privacy, cloud sync
 convex/                Convex schema + functions for cloud mode
 scripts/install-karen.mjs      Installer entry point
-PRODUCT.md             Product brief — purpose, users, tone
-DESIGN.md              Visual / interaction design brief
+KAREN.md                       Agent + contributor entry point
+docs/karen/02-product.md       Product brief - purpose, users, tone
+docs/karen/03-design.md        Visual / interaction design brief
+docs/karen/conventions/docs-spec.md   How Karen docs work
 ```
 
 ## Tone
@@ -98,7 +100,9 @@ Karen extends [OpenChamber](https://github.com/btriapitsyn/openchamber) — a ri
 
 ## Contributing
 
-Read [`PRODUCT.md`](PRODUCT.md) and [`DESIGN.md`](DESIGN.md) before opening PRs. The product brief is the spec; the design brief is the visual contract.
+Agents and contributors: read [`KAREN.md`](KAREN.md) first. It is the entry point for any work on Karen surfaces.
+
+Before opening PRs, read [`docs/karen/02-product.md`](docs/karen/02-product.md) and [`docs/karen/03-design.md`](docs/karen/03-design.md). The product brief is the spec; the design brief is the visual contract.
 
 ## License
 
