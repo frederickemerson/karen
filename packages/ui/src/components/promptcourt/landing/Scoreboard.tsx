@@ -104,6 +104,7 @@ export const Scoreboard: React.FC<{ overview?: PromptCourtOverview | null }> = (
         developers={developers}
         events={events}
         live={isKarenCloudConfigured}
+        allowPreviewData={!hasLiveData}
         updatedLabel={hasLiveData ? 'karen.overview live' : 'no public records yet'}
         title={hasLiveData ? 'Live leaderboard for people who read the diff.' : 'Leaderboard ready for first public run.'}
         subtitle={hasLiveData ? 'PromptCourt standings are pulled from Convex public records.' : 'Convex is configured but no public sessions are synced yet.'}
