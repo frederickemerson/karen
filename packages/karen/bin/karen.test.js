@@ -249,6 +249,25 @@ describe('Karen quiz analyzer v2', () => {
 });
 
 describe('Karen OpenCode TUI interception heuristics', () => {
+  test('does not run OpenCode for conversational or read-only exploration passes', () => {
+    expect(__karenTest.shouldRunAgentForEvaluation({
+      allowed: true,
+      intent: 'conversational',
+    })).toBe(false);
+    expect(__karenTest.shouldRunAgentForEvaluation({
+      allowed: true,
+      intent: 'exploration',
+    })).toBe(false);
+    expect(__karenTest.shouldRunAgentForEvaluation({
+      allowed: true,
+      intent: null,
+    })).toBe(true);
+    expect(__karenTest.shouldRunAgentForEvaluation({
+      allowed: false,
+      intent: null,
+    })).toBe(false);
+  });
+
   test('judges normal prompt input', () => {
     expect(__karenTest.classifyTuiContext('message\n> ')).toBe('prompt');
     expect(__karenTest.shouldJudgeTuiBuffer('Refactor src/session.ts to reject expired sessions and add tests.', {

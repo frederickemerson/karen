@@ -606,6 +606,12 @@ const printVerdict = (prompt, evaluation) => {
   }
 };
 
+const shouldRunAgentForEvaluation = (evaluation) => (
+  evaluation?.allowed === true
+  && evaluation.intent !== 'conversational'
+  && evaluation.intent !== 'exploration'
+);
+
 const maybeScreamAtLongPrompt = (prompt) => {
   if (prompt.length < KAREN_LONG_PROMPT_THRESHOLD) return;
   const screamChance = Math.min(0.75, (prompt.length - KAREN_LONG_PROMPT_THRESHOLD) / 1600);
@@ -1229,7 +1235,7 @@ const main = async () => {
     maybeScreamAtLongPrompt(prompt);
     const evaluation = evaluatePrompt(prompt);
     printVerdict(prompt, evaluation);
-    if (evaluation.allowed) {
+    if (shouldRunAgentForEvaluation(evaluation)) {
       const session = store.recordApprovedPrompt({
         username: username(),
         prompt: redactPublicText(prompt, 1200),
@@ -1265,6 +1271,7 @@ export const __karenTest = {
   buildQuiz,
   classifyTuiContext,
   parseDiff,
+  shouldRunAgentForEvaluation,
   shouldJudgeTuiBuffer,
   updateTuiBuffer,
 };
