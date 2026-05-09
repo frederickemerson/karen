@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { createPromptCourtCloudSync } from './cloud.js';
+import { getPromptCourtPrivacyPolicy, redactPublicText, sanitizePublicPost } from './privacy.js';
 
 const DEFAULT_USERNAME = 'local-user';
 
@@ -96,6 +97,8 @@ const computeProfile = (state, username) => {
   const averagePromptScore = average(promptScores);
   const quizPassRate = quizSessions.length > 0 ? Math.round((passedQuizCount / quizSessions.length) * 100) : 0;
   const successfulSessionRate = sessions.length > 0 ? Math.round((successfulSessions / sessions.length) * 100) : 0;
+  const grannySkips = Math.floor(currentStreak / 3);
+  const lifetimeGrannySkips = Math.floor(longestStreak / 3);
   const disciplineScore = Math.max(0, Math.min(100, Math.round(
     averagePromptScore * 0.35
     + quizPassRate * 0.30
@@ -113,6 +116,8 @@ const computeProfile = (state, username) => {
       quizPassRate,
       currentStreak,
       longestStreak,
+      grannySkips,
+      lifetimeGrannySkips,
       rollbackCount,
       publicFailureCount,
       perfectRuns: sessions.filter((session) => Number(session.promptScore) >= 85 && session.quizPassed === true).length,
@@ -121,7 +126,7 @@ const computeProfile = (state, username) => {
       promotedRuns: promotedCount,
       generatedFileCount,
     },
-    rewards: rewardListForProfile({ disciplineScore, longestStreak, rollbackCount, publicFailureCount, promptScores, quizPassRate, promotedCount, generatedFileCount }),
+    rewards: rewardListForProfile({ disciplineScore, longestStreak, rollbackCount, publicFailureCount, promptScores, quizPassRate, promotedCount, generatedFileCount, lifetimeGrannySkips }),
     recentSessions: sessions.slice(-20).reverse(),
     publicPosts: state.publicPosts.filter((post) => post.username === username).slice(-20).reverse(),
   };
@@ -161,10 +166,11 @@ const levelForScore = (score) => {
   return 'Prompt Menace';
 };
 
-const rewardListForProfile = ({ disciplineScore, longestStreak, rollbackCount, publicFailureCount, promptScores, quizPassRate, promotedCount, generatedFileCount }) => {
+const rewardListForProfile = ({ disciplineScore, longestStreak, rollbackCount, publicFailureCount, promptScores, quizPassRate, promotedCount, generatedFileCount, lifetimeGrannySkips = 0 }) => {
   const rewards = [];
   if (promptScores.length > 0) rewards.push({ id: 'first-verdict', label: 'First Verdict', tone: 'good' });
   if (promptScores.some((score) => score >= 85)) rewards.push({ id: 'criteria-enjoyer', label: 'Criteria Enjoyer', tone: 'good' });
+  if (lifetimeGrannySkips >= 1) rewards.push({ id: 'granny-skip', label: 'Granny Skip Earned', tone: 'good' });
   if (longestStreak >= 5) rewards.push({ id: 'five-clean-runs', label: 'Five Clean Runs', tone: 'good' });
   if (quizPassRate >= 80) rewards.push({ id: 'can-explain-diff', label: 'Can Explain The Diff', tone: 'good' });
   if (disciplineScore >= 85) rewards.push({ id: 'agent-handler', label: 'Agent Handler', tone: 'good' });
@@ -175,7 +181,11 @@ const rewardListForProfile = ({ disciplineScore, longestStreak, rollbackCount, p
   return rewards;
 };
 
-export const createPromptCourtStore = ({ openchamberDataDir, cloudSync = createPromptCourtCloudSync() }) => {
+export const createPromptCourtStore = ({
+  openchamberDataDir,
+  cloudSync = createPromptCourtCloudSync(),
+  privacyPolicy = getPromptCourtPrivacyPolicy(),
+}) => {
   const statePath = path.join(openchamberDataDir, 'promptcourt.json');
 
   const mutate = (fn) => {
@@ -201,7 +211,7 @@ export const createPromptCourtStore = ({ openchamberDataDir, cloudSync = createP
           id: `pc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
           username: normalized,
           status: 'blocked_bad_prompt',
-          prompt,
+          prompt: redactPublicText(prompt, 1200, { policy: privacyPolicy }),
           promptScore: evaluation.score,
           verdict: evaluation.verdict,
           reasons: evaluation.reasons,
@@ -215,15 +225,15 @@ export const createPromptCourtStore = ({ openchamberDataDir, cloudSync = createP
           label: `Blocked ${evaluation.score}/100 prompt`,
           details: evaluation.reasons.slice(0, 4).join(' · '),
         });
-        const post = {
+        const post = sanitizePublicPost({
           id: `post_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
           sessionId: session.id,
           username: normalized,
           type: 'bad_prompt',
           createdAt: Date.now(),
           ...publicPost,
-        };
-        state.publicPosts.push(post);
+        }, { policy: privacyPolicy });
+        if (post) state.publicPosts.push(post);
         return { session, post };
       });
       cloudSync.recordBlockedPrompt?.(result);
@@ -251,7 +261,7 @@ export const createPromptCourtStore = ({ openchamberDataDir, cloudSync = createP
           opencodeSessionId: sessionId,
           username: normalized,
           status: 'approved_pending_quiz',
-          prompt,
+          prompt: redactPublicText(prompt, 1200, { policy: privacyPolicy }),
           promptScore: evaluation.score,
           verdict: evaluation.verdict,
           reasons: evaluation.reasons,
@@ -297,17 +307,18 @@ export const createPromptCourtStore = ({ openchamberDataDir, cloudSync = createP
           label: quizPassed ? 'Quiz passed. Patch is eligible for promotion.' : 'Quiz failed. Generated code was reset.',
           details: session.changedFiles.length > 0 ? session.changedFiles.slice(0, 4).join(', ') : 'No changed files recorded',
         });
+        let post = null;
         if (publicPost) {
-          state.publicPosts.push({
+          post = sanitizePublicPost({
             id: `post_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
             sessionId: session.id,
             username: session.username,
             type: 'quiz_failed',
             createdAt: Date.now(),
             ...publicPost,
-          });
+          }, { policy: privacyPolicy });
+          if (post) state.publicPosts.push(post);
         }
-        const post = publicPost ? state.publicPosts[state.publicPosts.length - 1] : null;
         return { session, post };
       });
       if (!result) return null;

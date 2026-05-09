@@ -26,7 +26,7 @@ const baseSteps = (outcome: 'promoted' | 'deleted'): KarenReplayStep[] => [
   {
     id: 'prompt-submitted',
     label: 'Prompt submitted',
-    description: 'User handed Karen a task to judge before execution.',
+    description: 'Karen received a scoped request and checked it before execution.',
     detail: 'Scoped to the active repo with a prompt score attached.',
     timestamp: '00:00',
     status: 'complete',
@@ -36,7 +36,7 @@ const baseSteps = (outcome: 'promoted' | 'deleted'): KarenReplayStep[] => [
     id: 'verdict',
     label: 'Verdict',
     description: 'Karen checked specificity, constraints, files, and test intent.',
-    detail: 'Approved for sandbox only. No real repo writes yet.',
+    detail: 'Approved for sandbox execution only. The real repo stays untouched.',
     timestamp: '00:07',
     status: 'complete',
     metric: 'approved',
@@ -44,8 +44,8 @@ const baseSteps = (outcome: 'promoted' | 'deleted'): KarenReplayStep[] => [
   {
     id: 'sandbox-run',
     label: 'Sandbox run',
-    description: 'OpenCode executed inside an isolated worktree.',
-    detail: 'Provider, model, MCP, and agent behavior stay inside the run cage.',
+    description: 'The coding agent executed inside an isolated worktree.',
+    detail: 'Model, tools, and file changes stay inside the run cage.',
     timestamp: '00:34',
     status: 'complete',
     metric: 'isolated',
@@ -132,7 +132,7 @@ const ReplayFrame = ({ index, active }: { index: number; active: boolean }) => (
 export const KarenReplayTape: React.FC<KarenReplayTapeProps> = ({
   className,
   title = 'Karen Replay Tape',
-  subtitle = 'A local replay of the guarded run, from prompt to patch fate.',
+  subtitle = 'A replay of the guarded run, from prompt to patch outcome.',
   outcome = 'promoted',
   steps,
 }) => {
@@ -143,12 +143,41 @@ export const KarenReplayTape: React.FC<KarenReplayTapeProps> = ({
   const [recording, setRecording] = React.useState(false);
   const [speed, setSpeed] = React.useState('1x');
   const [exportStatus, setExportStatus] = React.useState<string | null>(null);
+  const [exportingFormat, setExportingFormat] = React.useState<string | null>(null);
   const selectedStep = replaySteps[Math.min(selectedIndex, replaySteps.length - 1)];
   const progress = replaySteps.length > 1 ? (selectedIndex / (replaySteps.length - 1)) * 100 : 100;
 
-  const fakeExport = (format: string) => {
-    setExportStatus(`${format} export staged locally`);
-    window.setTimeout(() => setExportStatus(null), 1800);
+  const exportReplay = async (format: 'mp4' | 'json') => {
+    setExportingFormat(format);
+    setExportStatus(`Preparing ${format.toUpperCase()} export...`);
+    try {
+      const response = await fetch('/api/promptcourt/replay/export', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          format,
+          title,
+          subtitle,
+          outcome,
+          steps: replaySteps,
+        }),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || !payload?.ok) {
+        throw new Error(payload?.error || 'Replay export failed');
+      }
+      const filename = payload.export?.artifact?.filename || 'replay manifest';
+      setExportStatus(
+        payload.export?.fallback
+          ? `MP4 renderer not installed yet. Remotion manifest exported: ${filename}`
+          : `${format.toUpperCase()} export ready: ${filename}`,
+      );
+    } catch (error) {
+      setExportStatus(error instanceof Error ? error.message : 'Replay export failed');
+    } finally {
+      setExportingFormat(null);
+      window.setTimeout(() => setExportStatus(null), 5000);
+    }
   };
 
   return (
@@ -177,17 +206,19 @@ export const KarenReplayTape: React.FC<KarenReplayTapeProps> = ({
           </button>
           <button
             type="button"
-            onClick={() => fakeExport('MP4')}
+            onClick={() => exportReplay('mp4')}
+            disabled={exportingFormat !== null}
             className="rounded-md border border-border bg-background px-3 py-2 typography-ui-label text-foreground hover:bg-muted/45"
           >
-            Export MP4
+            {exportingFormat === 'mp4' ? 'Exporting...' : 'Export MP4'}
           </button>
           <button
             type="button"
-            onClick={() => fakeExport('JSON')}
+            onClick={() => exportReplay('json')}
+            disabled={exportingFormat !== null}
             className="rounded-md border border-border bg-background px-3 py-2 typography-ui-label text-foreground hover:bg-muted/45"
           >
-            Export JSON
+            {exportingFormat === 'json' ? 'Exporting...' : 'Export JSON'}
           </button>
         </div>
       </div>
@@ -198,7 +229,7 @@ export const KarenReplayTape: React.FC<KarenReplayTapeProps> = ({
             <div>
               <div className="typography-ui-label text-foreground">Tape controls</div>
               <div className="mt-1 typography-micro text-muted-foreground">
-                Fake controls only. Backend recording is not wired.
+                Server export returns a replay contract now; MP4 rendering can plug into that contract next.
               </div>
             </div>
             <div className="flex shrink-0 rounded-md border border-border bg-card p-1">

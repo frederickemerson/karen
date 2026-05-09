@@ -10,7 +10,7 @@ The terminal judgment layer for OpenCode. This is the product. Karen runs in a d
 
 ## Agent TL;DR
 
-- One file does most of the work: [`bin/karen.js`](bin/karen.js). Keep it focused on terminal UX, OpenCode passthrough, worktree orchestration, and quiz flow.
+- Three modules: [`bin/karen.js`](bin/karen.js) owns terminal UX, OpenCode passthrough, worktree orchestration, and the quiz flow; [`lib/quiz-analyzer.js`](lib/quiz-analyzer.js) owns diff parsing and quiz evidence; [`lib/opencode-hook.js`](lib/opencode-hook.js) owns the upstream-hook vs PTY interception decision.
 - Prompt evaluation, storage, and privacy redaction live in [`../web/server/lib/promptcourt/`](../web/server/lib/promptcourt/) and are imported directly. Do not duplicate them here.
 - Worktree isolation and patch promotion are non-negotiable. The self-check in [`self-check/worktree-safe.mjs`](self-check/worktree-safe.mjs) protects this contract.
 - The installer and the `karen` launcher live in [`scripts/install-karen.mjs`](../../scripts/install-karen.mjs). For installer behavior, read [`docs/karen/operations/install.md`](../../docs/karen/operations/install.md).
@@ -22,7 +22,9 @@ Make the agent loop feel like a courtroom: charges, verdict, sentence, appeal, r
 
 ## Files
 
-- [`bin/karen.js`](bin/karen.js) - main CLI entrypoint. Renders the shell, runs the setup wizard, dispatches `/commands`, intercepts terminal-typed prompts, runs the prompt-evaluate -> worktree -> OpenCode -> quiz -> promote loop, plays audio cues, generates parser- and AI-backed quizzes.
+- [`bin/karen.js`](bin/karen.js) - main CLI entrypoint. Renders the shell, runs the setup wizard, dispatches `/commands`, intercepts terminal-typed prompts, runs the prompt-evaluate -> worktree -> OpenCode -> quiz -> promote loop, plays audio cues, and assembles parser- and AI-backed quizzes. Imports diff parsing from [`lib/quiz-analyzer.js`](lib/quiz-analyzer.js) and (when wired) prompt-hook strategy selection from [`lib/opencode-hook.js`](lib/opencode-hook.js).
+- [`lib/quiz-analyzer.js`](lib/quiz-analyzer.js) - TypeScript-AST-backed diff analyzer. Exports `parseDiff(diff)`, `analyzeQuizEvidence(summary, { cwd })` (aliased as `analyzeDiffImpact`), and helpers (`isTestFile`, `isConfigFile`, `isJavaScriptLikeFile`, `extractSymbols`). Produces test-coverage mapping, exported/changed-symbol sets, call-site detail, and config-impact evidence used to build quiz questions.
+- [`lib/opencode-hook.js`](lib/opencode-hook.js) - upstream OpenCode prompt-hook adapter. Exports `readOpenCodeHookConfig`, `detectOpenCodeHookSupport`, `selectOpenCodeInterceptionStrategy`, `normalizeOpenCodePromptEvent`, `createOpenCodeHookAdapter`, and `openCodeHookStrategies` (`HOOK_STRATEGY` / `PTY_STRATEGY` / `DISABLED_STRATEGY` / `UNAVAILABLE_STRATEGY`). Honors `KAREN_OPENCODE_HOOK_MODE` (`auto` / `required` / `disabled` / `pty`); when no upstream hook API is detected it falls back to PTY heuristics unless the mode forbids it.
 - [`self-check/worktree-safe.mjs`](self-check/worktree-safe.mjs) - end-to-end self-check for the worktree isolation contract. Creates a temp git repo, simulates failed and passed runs, and asserts that failed runs cannot leak files into the real repo and that passed runs promote correctly.
 - [`self-check/cli-and-installer.mjs`](self-check/cli-and-installer.mjs) - asserts `karen --help` exposes documented commands, and that the installer can install, report status, and uninstall using a temp directory.
 
@@ -42,6 +44,11 @@ Public CLI surface:
 - `karen --version` / `-v` - prints the package version from [`package.json`](package.json).
 
 Inside the shell, slash commands include `/help`, `/setup`, `/gui`, `/tui`, `/tui-raw`, `/run`, `/providers`, `/models`, `/auth`, `/mcp`, `/agent`, `/session`, `/stats`, `/audio`, `/feed`, `/profile`, `/diff`, `/opencode ...`, and `/quit`. The full list is enumerated in `printHelp` and `printOpenCodeCommands` in [`bin/karen.js`](bin/karen.js).
+
+Local module imports inside [`bin/karen.js`](bin/karen.js):
+
+- `analyzeDiffImpact`, `parseDiff` from [`lib/quiz-analyzer.js`](lib/quiz-analyzer.js).
+- `createOpenCodeHookAdapter` and friends from [`lib/opencode-hook.js`](lib/opencode-hook.js) when wiring upstream prompt hooks.
 
 Imports from sibling Karen surfaces:
 
@@ -81,19 +88,21 @@ The TUI passthrough mode (`/tui`) wraps OpenCode's TUI with a PTY-level intercep
 - **Audio is opt-in for some channels.** `KAREN_AUDIO`, `KAREN_BELL`, `KAREN_MUSIC` default on; `KAREN_SAY`, `KAREN_SYSTEM_AUDIO`, `KAREN_ELEVENLABS_AUDIO` default off (last one defaults on only when `ELEVENLABS_API_KEY` is set). ElevenLabs has a daily character cap and falls back to local TTS.
 - **Setup wizard runs once.** `runSetupWizard` skips when `OPENCODE_BINARY` resolves and a default model is already chosen. `KAREN_SKIP_SETUP=1` forces skip (used by self-checks and CI).
 - **No prompt is judged by heuristic alone.** The evaluator is the single source of truth for verdicts. The CLI never overrides a verdict; it only renders it.
+- **Upstream hook beats PTY heuristics.** When [`lib/opencode-hook.js`](lib/opencode-hook.js) detects a real OpenCode prompt-submission hook, the adapter uses it. PTY interception is the compatibility fallback for current OpenCode builds and must stay secondary; `KAREN_OPENCODE_HOOK_MODE=required` makes Karen refuse to fall back.
 
 ## Change rules
 
-- Behavior changes go in [`bin/karen.js`](bin/karen.js). Avoid leaking new logic into multiple files.
+- Terminal-UX changes go in [`bin/karen.js`](bin/karen.js). Diff- or evidence-related logic goes in [`lib/quiz-analyzer.js`](lib/quiz-analyzer.js). Hook-strategy logic goes in [`lib/opencode-hook.js`](lib/opencode-hook.js). Do not duplicate across files.
 - New environment toggles must be documented in [`docs/karen/operations/env.md`](../../docs/karen/operations/env.md) in the same change.
 - Touching the worktree, patch promotion, or rollback paths requires updating [`self-check/worktree-safe.mjs`](self-check/worktree-safe.mjs) so the new behavior is asserted.
 - Changes to slash commands or top-level help must keep [`self-check/cli-and-installer.mjs`](self-check/cli-and-installer.mjs) green (it asserts `/opencode ...` and `/providers` show up in help).
-- Quiz logic exports test hooks via the `__karenTest` object at the bottom of [`bin/karen.js`](bin/karen.js). Keep the names of `analyzeDiffImpact`, `buildAiQuiz`, `buildParserQuiz`, `buildQuiz`, `classifyTuiContext`, `parseDiff`, `shouldJudgeTuiBuffer`, and `updateTuiBuffer` stable; the bin tests depend on them.
+- Quiz logic exports test hooks via the `__karenTest` object at the bottom of [`bin/karen.js`](bin/karen.js). Keep the names of `analyzeDiffImpact`, `buildAiQuiz`, `buildParserQuiz`, `buildQuiz`, `classifyTuiContext`, `parseDiff`, `shouldJudgeTuiBuffer`, and `updateTuiBuffer` stable; [`bin/karen.test.js`](bin/karen.test.js) depends on them.
+- The exported names from [`lib/opencode-hook.js`](lib/opencode-hook.js) (`createOpenCodeHookAdapter`, `selectOpenCodeInterceptionStrategy`, `normalizeOpenCodePromptEvent`, `openCodeHookStrategies`) are part of the test contract; renaming them requires a parallel update to [`bin/karen.test.js`](bin/karen.test.js).
 - Imports from `../../web/server/lib/promptcourt/*` are an intentional cross-surface dependency. Do not invert it (server must not import from `packages/karen/`).
 
 ## Tests
 
-- `bin/karen.test.js` - Bun-based unit tests covering the exported `__karenTest` helpers. Run via `bun test bin/*.test.js`.
+- [`bin/karen.test.js`](bin/karen.test.js) - Bun-based unit tests covering the exported `__karenTest` helpers, the `parseDiff` / `analyzeDiffImpact` contract from [`lib/quiz-analyzer.js`](lib/quiz-analyzer.js), and the hook-strategy decision matrix from [`lib/opencode-hook.js`](lib/opencode-hook.js). Run via `bun test bin/*.test.js`.
 - [`self-check/worktree-safe.mjs`](self-check/worktree-safe.mjs) - end-to-end worktree isolation contract.
 - [`self-check/cli-and-installer.mjs`](self-check/cli-and-installer.mjs) - end-to-end CLI help + install/status/uninstall flow.
 

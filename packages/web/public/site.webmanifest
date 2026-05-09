@@ -1,7 +1,7 @@
 {
-  "name": "OpenChamber - AI Coding Companion",
-  "short_name": "OpenChamber",
-  "description": "OpenChamber desktop companion for the OpenCode AI coding agent",
+  "name": "Karen - AI Code Reading Guard",
+  "short_name": "Karen",
+  "description": "Prompt judge, sandbox runner, and diff quiz for AI-written code",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#151313",

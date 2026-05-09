@@ -26,7 +26,7 @@ describe('promptcourt route behavior', () => {
     const verdict = evaluatePromptCourtRun({
       store,
       username: 'Route Tester',
-      prompt: 'fix it',
+      prompt: 'do your magic',
     });
 
     expect(verdict.allowed).toBe(false);
@@ -40,7 +40,7 @@ describe('promptcourt route behavior', () => {
     evaluatePromptCourtRun({
       store,
       username: 'Route Tester',
-      prompt: 'fix it',
+      prompt: 'do your magic',
     });
 
     const overview = store.getOverview();

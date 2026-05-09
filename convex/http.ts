@@ -61,4 +61,102 @@ http.route({
   }),
 });
 
+http.route({
+  path: '/karen/admin/moderate-post',
+  method: 'POST',
+  handler: httpAction(async (ctx, request) => {
+    const authorization = authorizeIngest(request);
+    if (!authorization.ok) {
+      return json({ ok: false, error: authorization.error }, authorization.status);
+    }
+
+    const body = await request.json().catch(() => null);
+    if (!body || typeof body !== 'object') {
+      return json({ ok: false, error: 'invalid_json' }, 400);
+    }
+
+    const result = await ctx.runMutation(internal.karen.moderatePublicPostBySecret, {
+      postId: (body as any).postId,
+      moderationStatus: (body as any).moderationStatus,
+      visibility: (body as any).visibility,
+      reason: (body as any).reason,
+    });
+    return json(result);
+  }),
+});
+
+http.route({
+  path: '/karen/admin/moderate-user',
+  method: 'POST',
+  handler: httpAction(async (ctx, request) => {
+    const authorization = authorizeIngest(request);
+    if (!authorization.ok) {
+      return json({ ok: false, error: authorization.error }, authorization.status);
+    }
+
+    const body = await request.json().catch(() => null);
+    if (!body || typeof body !== 'object') {
+      return json({ ok: false, error: 'invalid_json' }, 400);
+    }
+
+    const result = await ctx.runMutation(internal.karen.moderateUserBySecret, {
+      userId: (body as any).userId,
+      status: (body as any).status,
+      publicProfileEnabled: (body as any).publicProfileEnabled,
+      reason: (body as any).reason,
+    });
+    return json(result);
+  }),
+});
+
+http.route({
+  path: '/karen/admin/reset-user',
+  method: 'POST',
+  handler: httpAction(async (ctx, request) => {
+    const authorization = authorizeIngest(request);
+    if (!authorization.ok) {
+      return json({ ok: false, error: authorization.error }, authorization.status);
+    }
+
+    const body = await request.json().catch(() => null);
+    if (!body || typeof body !== 'object') {
+      return json({ ok: false, error: 'invalid_json' }, 400);
+    }
+
+    const result = await ctx.runMutation(internal.karen.resetUserDataBySecret, {
+      userId: (body as any).userId,
+      mode: (body as any).mode,
+      reason: (body as any).reason,
+    });
+    return json(result);
+  }),
+});
+
+http.route({
+  path: '/karen/admin/org-settings',
+  method: 'POST',
+  handler: httpAction(async (ctx, request) => {
+    const authorization = authorizeIngest(request);
+    if (!authorization.ok) {
+      return json({ ok: false, error: authorization.error }, authorization.status);
+    }
+
+    const body = await request.json().catch(() => null);
+    if (!body || typeof body !== 'object') {
+      return json({ ok: false, error: 'invalid_json' }, 400);
+    }
+
+    const result = await ctx.runMutation(internal.karen.setOrgSettingsBySecret, {
+      orgId: (body as any).orgId,
+      mode: (body as any).mode,
+      secretScanningEnabled: (body as any).secretScanningEnabled,
+      publicPostingEnabled: (body as any).publicPostingEnabled,
+      requireClerkForPublicProfiles: (body as any).requireClerkForPublicProfiles,
+      allowLocalUsersOnLeaderboard: (body as any).allowLocalUsersOnLeaderboard,
+      moderationMode: (body as any).moderationMode,
+    });
+    return json(result);
+  }),
+});
+
 export default http;

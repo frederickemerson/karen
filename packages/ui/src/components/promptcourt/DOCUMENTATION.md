@@ -22,7 +22,7 @@ Make Karen's records public, glanceable, and arcade-shaped. Convert PromptCourt'
 
 ## Files
 
-- [`PromptCourtPage.tsx`](PromptCourtPage.tsx) - the live profile page. Composes `LaunchControls`, `LiveRunStream`, `RecentSessions`, `ProfilePanel`, `BadPromptGraveyard`, `ProofProfileCard`. Subscribes to `/api/promptcourt/runs/events` SSE for the live run stream and to PromptCourt overview/profile data.
+- [`PromptCourtPage.tsx`](PromptCourtPage.tsx) - the live profile page. Composes `LaunchControls`, `LiveRunStream`, `RecentSessions`, `ProfilePanel`, `BadPromptGraveyard`, `ProofProfileCard`. Subscribes to `/api/promptcourt/runs/events` SSE for the global live run stream and, when launching a guarded run from the browser, to `/api/promptcourt/gui-runs/:runId/events` for that run's lifecycle. Reads PromptCourt overview/profile data from Convex when configured and falls back to local data when not.
 - [`KarenLandingPage.tsx`](KarenLandingPage.tsx) - the public marketing page. Assembles the courtroom showcase, replay tape, badge wall, leaderboard, voice panel, and graveyard into a single scrollable surface.
 - [`KarenCloudProvider.tsx`](KarenCloudProvider.tsx) - root provider. Wraps children in `ConvexProviderWithClerk` (when configured) or a no-op fallback. Reads `VITE_CONVEX_URL` and `VITE_CLERK_PUBLISHABLE_KEY`.
 - [`BadPromptGraveyard.tsx`](BadPromptGraveyard.tsx) - card-grid view of blocked-prompt public posts with score-tone classes (awful, weak, appeal) and a share button that copies a redacted excerpt.
@@ -49,7 +49,7 @@ Public exports:
 Data sources:
 
 - Convex queries (`convex/react`): `karen.overview`, `karen.profile`. Mutations: `karen.upsertCurrentUser` (Clerk-gated).
-- Inherited HTTP: `/api/promptcourt/runs`, `/api/promptcourt/runs/events` (SSE), `/api/promptcourt/run` (used by `LaunchControls`).
+- Karen HTTP surface: `/api/promptcourt/runs`, `/api/promptcourt/runs/events` (SSE), `/api/promptcourt/run` (terminal launcher), and `/api/promptcourt/gui-runs` + `/api/promptcourt/gui-runs/:runId/events` (in-browser guarded runs surfaced by `PromptCourtPage`).
 - `localStorage` for the Grandma voice panel settings only.
 
 Theme tokens used: text/foreground, accent (acidic green), destructive (hot red), warning (amber), info (electric cyan). Reconcile with [`../../../../../docs/karen/03-design.md`](../../../../../docs/karen/03-design.md) and the inherited theme system.

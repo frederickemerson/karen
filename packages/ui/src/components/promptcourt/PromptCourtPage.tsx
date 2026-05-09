@@ -41,22 +41,22 @@ const commandCards = [
   {
     label: 'Open Karen',
     command: 'karen',
-    helper: 'Launch the terminal-first judge from any repo after installing.',
+    helper: 'Start the terminal judge from any repo after installation.',
   },
   {
     label: 'Install command',
     command: 'bun run install:karen',
-    helper: 'Creates the local karen command without leaving this repo.',
+    helper: 'Creates the local `karen` command without leaving this repo.',
   },
   {
     label: 'Start GUI',
     command: 'OPENCHAMBER_PORT=3002 bun run dev',
-    helper: 'Serves the local Karen dashboard and workspace shell.',
+    helper: 'Runs the local Karen dashboard and workspace shell.',
   },
   {
-    label: 'OpenCode passthrough',
+    label: 'Agent passthrough',
     command: '/oc providers list',
-    helper: 'Run inside Karen when you need raw OpenCode commands.',
+    helper: 'Run raw agent commands from inside Karen when you need them.',
   },
 ];
 
@@ -166,9 +166,9 @@ const LaunchControls = ({ profile, onRun, runPrompt, onRunPromptChange, runStatu
         <KarenLogo className="size-14 shrink-0" mood={profile.stats.rollbackCount > 0 ? 'mad' : 'calm'} />
         <div>
           <div className="typography-ui-label text-muted-foreground">Launch desk</div>
-          <h2 className="mt-1 text-xl font-semibold tracking-normal text-foreground">Run Karen where the code lives</h2>
+          <h2 className="mt-1 text-xl font-semibold tracking-normal text-foreground">Let Karen judge the run before it touches your repo</h2>
           <p className="mt-2 typography-body text-muted-foreground">
-            The GUI launches and streams runs. The terminal `/tui` path still owns the live interactive quiz.
+            The GUI starts a guarded browser job, records the verdict, and streams the quiz gate. Use terminal `/tui` when you need live interception inside the agent UI.
           </p>
         </div>
       </div>
@@ -177,17 +177,17 @@ const LaunchControls = ({ profile, onRun, runPrompt, onRunPromptChange, runStatu
           value={runPrompt}
           onChange={(event) => onRunPromptChange(event.target.value)}
           rows={4}
-          placeholder="Ask Karen to run a scoped prompt..."
+          placeholder="Tell Karen exactly what to change, where to change it, and how you will verify it."
           className="min-h-28 resize-y rounded-md border border-border bg-background px-3 py-2 typography-body text-foreground outline-none focus:border-primary"
         />
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
             onClick={onRun}
-            disabled={!canRun}
-            className="rounded-md border border-border bg-foreground px-3 py-2 typography-ui-label text-background disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            Run guarded prompt
+          disabled={!canRun}
+          className="rounded-md border border-border bg-foreground px-3 py-2 typography-ui-label text-background disabled:cursor-not-allowed disabled:opacity-50"
+        >
+            Start guarded run
           </button>
           <a href="/" className="rounded-md border border-border px-3 py-2 typography-ui-label text-foreground hover:bg-muted/40">
             Open workspace
@@ -208,14 +208,14 @@ const LaunchControls = ({ profile, onRun, runPrompt, onRunPromptChange, runStatu
 );
 
 const runEventTone = (status: string): 'good' | 'bad' | 'default' => {
-  if (status === 'quiz_passed' || status === 'synced') return 'good';
+  if (status === 'quiz_required' || status === 'quiz_passed' || status === 'synced') return 'good';
   if (status === 'blocked' || status === 'rollback' || status === 'failed') return 'bad';
   return 'default';
 };
 
 const audioEventForRunStatus = (status: string): KarenAudioEvent | null => {
   if (status === 'blocked') return 'prompt-blocked';
-  if (status === 'quiz_passed' || status === 'synced') return 'quiz-pass';
+  if (status === 'quiz_required' || status === 'quiz_passed' || status === 'synced') return 'quiz-pass';
   if (status === 'rollback') return 'rollback';
   if (status === 'failed') return 'quiz-fail';
   return null;
@@ -227,7 +227,7 @@ const LiveRunStream = ({ events }: { events: PromptCourtRunEvent[] }) => (
       <div>
         <h2 className="text-xl font-semibold tracking-normal text-foreground">Live Run Status</h2>
         <p className="mt-1 typography-micro text-muted-foreground">
-          Browser stream from local Karen runs: running, blocked, quiz, rollback, sync, and launcher failures.
+          Live events from Karen runs: queued, judged, blocked, running, quiz required, rollback, and sync.
         </p>
       </div>
       <span className="rounded-sm bg-muted px-2 py-1 typography-micro text-muted-foreground">
@@ -256,7 +256,7 @@ const LiveRunStream = ({ events }: { events: PromptCourtRunEvent[] }) => (
         );
       }) : (
         <div className="rounded-md border border-dashed border-border bg-background/50 p-4 typography-body text-muted-foreground">
-          Start a guarded prompt from the GUI or terminal. Karen will stream the verdict here.
+          Start a guarded run from the GUI or terminal. Karen will stream the verdict here.
         </div>
       )}
     </div>
@@ -307,7 +307,7 @@ const ProfilePanel = ({ profile, overview }: { profile: PromptCourtProfile; over
           <div className="flex items-start gap-4">
             <KarenLogo className="size-14 shrink-0" mood={profile.stats.publicFailureCount > 0 ? 'mad' : 'calm'} />
             <div>
-              <div className="typography-ui-label text-muted-foreground">Karen GUI</div>
+              <div className="typography-ui-label text-muted-foreground">Karen control room</div>
               <h1 className="mt-1 text-4xl font-semibold tracking-normal text-foreground">@{profile.user.username}</h1>
               <div className="mt-1 typography-body text-muted-foreground">{profile.stats.level}</div>
             </div>
@@ -321,6 +321,7 @@ const ProfilePanel = ({ profile, overview }: { profile: PromptCourtProfile; over
           <Stat label="Public Fails" value={profile.stats.publicFailureCount} tone={profile.stats.publicFailureCount > 0 ? 'bad' : 'default'} />
           <Stat label="Current Streak" value={profile.stats.currentStreak} />
           <Stat label="Longest Streak" value={profile.stats.longestStreak} />
+          <Stat label="Granny Skips" value={profile.stats.grannySkips ?? 0} tone={(profile.stats.grannySkips ?? 0) > 0 ? 'good' : 'default'} />
           <Stat label="Rollbacks" value={profile.stats.rollbackCount} tone={profile.stats.rollbackCount > 0 ? 'bad' : 'default'} />
           <Stat label="Files Survived" value={profile.stats.generatedFileCount} />
         </div>
@@ -384,8 +385,36 @@ const CurrentUserBinder = () => {
 
 const AuthBinder = () => isKarenAuthConfigured ? <CurrentUserBinder /> : null;
 
-const runKarenPrompt = async (prompt: string): Promise<string> => {
-  const response = await fetch('/api/promptcourt/run', {
+type GuiRun = {
+  id: string;
+  sessionId?: string | null;
+  username: string;
+  status: string;
+  promptScore?: number | null;
+  verdict?: string | null;
+  reasons?: string[];
+  quiz?: {
+    title: string;
+    instructions: string;
+    questions: Array<{
+      id: string;
+      prompt: string;
+      choices: string[];
+      answerIndex: number;
+      explanation: string;
+    }>;
+  } | null;
+  error?: string | null;
+  createdAt: number;
+  updatedAt: number;
+};
+
+type GuiRunEvent = PromptCourtRunEvent & {
+  runId: string;
+};
+
+const runKarenPrompt = async (prompt: string): Promise<{ message: string; run: GuiRun }> => {
+  const response = await fetch('/api/promptcourt/gui-runs', {
     method: 'POST',
     headers: {
       accept: 'application/json',
@@ -394,11 +423,17 @@ const runKarenPrompt = async (prompt: string): Promise<string> => {
     },
     body: JSON.stringify({ prompt, username: getPromptCourtUsername() }),
   });
-  const payload = await response.json().catch(() => ({})) as { message?: string; error?: string; verdict?: string };
+  const payload = await response.json().catch(() => ({})) as { message?: string; error?: string; run?: GuiRun };
   if (!response.ok) {
     throw new Error(payload.error || `Karen run failed (${response.status})`);
   }
-  return payload.message || payload.verdict || 'Karen run started.';
+  if (!payload.run) {
+    throw new Error('Karen did not return a GUI run id.');
+  }
+  return {
+    message: payload.message || 'Karen queued a guarded browser run.',
+    run: payload.run,
+  };
 };
 
 const PromptCourtLayout: React.FC<{
@@ -410,6 +445,8 @@ const PromptCourtLayout: React.FC<{
   const [runPrompt, setRunPrompt] = React.useState('');
   const [runStatus, setRunStatus] = React.useState<string | null>(null);
   const [runEvents, setRunEvents] = React.useState<PromptCourtRunEvent[]>([]);
+  const [activeGuiRun, setActiveGuiRun] = React.useState<GuiRun | null>(null);
+  const [activeGuiRunEvents, setActiveGuiRunEvents] = React.useState<GuiRunEvent[]>([]);
   const [isRunning, setIsRunning] = React.useState(false);
   const announcedRunEvents = React.useRef(new Set<string>());
   const feed = overview?.feed ?? [];
@@ -466,18 +503,62 @@ const PromptCourtLayout: React.FC<{
     };
   }, [profile?.user.username]);
 
+  React.useEffect(() => {
+    if (!activeGuiRun?.id) return;
+    const events = new EventSource(`/api/promptcourt/gui-runs/${encodeURIComponent(activeGuiRun.id)}/events`);
+    events.addEventListener('gui-run', (message) => {
+      try {
+        const payload = JSON.parse((message as MessageEvent).data) as { event: GuiRunEvent; run: GuiRun };
+        setActiveGuiRun(payload.run);
+        setActiveGuiRunEvents((current) => {
+          const byId = new Map(current.map((event) => [event.id, event]));
+          byId.set(payload.event.id, payload.event);
+          return [...byId.values()].sort((left, right) => right.createdAt - left.createdAt).slice(0, 12);
+        });
+        setRunEvents((current) => {
+          const byId = new Map(current.map((event) => [event.id, event]));
+          byId.set(payload.event.id, payload.event);
+          return [...byId.values()].sort((left, right) => right.createdAt - left.createdAt).slice(0, 30);
+        });
+        if (payload.run.status === 'quiz_required') {
+          setIsRunning(false);
+          setRunStatus('Karen reached the quiz gate. The next step is the real diff-backed browser quiz.');
+        } else if (payload.run.status === 'blocked') {
+          setIsRunning(false);
+          setRunStatus('Karen blocked that prompt before it touched the code.');
+        } else if (payload.run.status === 'failed') {
+          setIsRunning(false);
+          setRunStatus(payload.run.error || 'Karen GUI run failed.');
+        } else {
+          setRunStatus(payload.event.label);
+        }
+      } catch {
+        // Ignore malformed stream events.
+      }
+    });
+    events.onerror = () => {
+      events.close();
+    };
+    return () => {
+      events.close();
+    };
+  }, [activeGuiRun?.id]);
+
   const handleRun = async () => {
     const prompt = runPrompt.trim();
     if (!prompt) return;
     setIsRunning(true);
-    setRunStatus('Karen is judging this prompt...');
+    setActiveGuiRun(null);
+    setActiveGuiRunEvents([]);
+    setRunStatus('Karen is queuing this guarded browser run...');
     try {
-      const message = await runKarenPrompt(prompt);
+      const { message, run } = await runKarenPrompt(prompt);
+      setActiveGuiRun(run);
+      setActiveGuiRunEvents([]);
       setRunStatus(message);
       setRunPrompt('');
     } catch (nextError) {
       setRunStatus(nextError instanceof Error ? nextError.message : 'Karen run failed.');
-    } finally {
       setIsRunning(false);
     }
   };
@@ -491,7 +572,7 @@ const PromptCourtLayout: React.FC<{
           <div className="flex flex-wrap items-center gap-3">
             <a href="/karen/landing" className="typography-micro text-primary hover:underline">Landing page</a>
             <div className="typography-micro text-muted-foreground">
-              {source === 'cloud' ? 'Live Convex profile' : 'Local profile'} · GUI launch and terminal `/tui` share this record.
+              {source === 'cloud' ? 'Live Convex profile' : 'Local profile'} · GUI runs and terminal `/tui` sessions share this record.
             </div>
             <KarenAuthBar />
           </div>
@@ -512,12 +593,77 @@ const PromptCourtLayout: React.FC<{
             canRun={canRun}
           />
         ) : null}
+        {activeGuiRun ? (
+          <section className="rounded-md border border-border bg-card p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 className="text-xl font-semibold tracking-normal text-foreground">Browser Run</h2>
+                <p className="mt-1 typography-micro text-muted-foreground">
+                  GUI job <code className="font-mono text-foreground">{activeGuiRun.id}</code> is following the guarded run lifecycle.
+                </p>
+              </div>
+              <span className={cn(
+                'rounded-sm px-2 py-1 typography-micro font-medium',
+                runEventTone(activeGuiRun.status) === 'good' && 'bg-[var(--status-success)]/15 text-[var(--status-success)]',
+                runEventTone(activeGuiRun.status) === 'bad' && 'bg-[var(--status-error)]/15 text-[var(--status-error)]',
+                runEventTone(activeGuiRun.status) === 'default' && 'bg-muted text-muted-foreground',
+              )}>
+                {activeGuiRun.status.replaceAll('_', ' ')}
+              </span>
+            </div>
+            <div className="mt-4 grid gap-3 lg:grid-cols-[0.8fr_1.2fr]">
+              <div className="rounded-md border border-border bg-background/50 p-3">
+                <div className="typography-micro text-muted-foreground">Verdict</div>
+                <div className="mt-1 typography-title text-foreground">
+                  {activeGuiRun.promptScore === null || activeGuiRun.promptScore === undefined
+                    ? 'Pending'
+                    : `${activeGuiRun.promptScore}/100`}
+                </div>
+                {activeGuiRun.reasons && activeGuiRun.reasons.length > 0 ? (
+                  <div className="mt-3 flex flex-wrap gap-1.5">
+                    {activeGuiRun.reasons.slice(0, 4).map((reason) => (
+                      <span key={reason} className="rounded-sm bg-muted px-2 py-1 typography-micro text-muted-foreground">
+                        {reason}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+              <div className="rounded-md border border-border bg-background/50 p-3">
+                <div className="typography-micro text-muted-foreground">Quiz Gate</div>
+                {activeGuiRun.quiz ? (
+                  <div className="mt-1">
+                    <div className="typography-ui-label text-foreground">{activeGuiRun.quiz.title}</div>
+                    <p className="mt-1 typography-body text-muted-foreground">{activeGuiRun.quiz.instructions}</p>
+                  </div>
+                ) : (
+                  <p className="mt-1 typography-body text-muted-foreground">
+                    Waiting for Karen to judge the prompt and hand the run to the quiz gate.
+                  </p>
+                )}
+              </div>
+            </div>
+            {activeGuiRunEvents.length > 0 ? (
+              <div className="mt-4 grid gap-2">
+                {activeGuiRunEvents.slice(0, 5).map((event) => (
+                  <div key={event.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-background/50 px-3 py-2">
+                    <div>
+                      <span className="typography-ui-label text-foreground">{event.label}</span>
+                      {event.details ? <span className="ml-2 typography-micro text-muted-foreground">{event.details}</span> : null}
+                    </div>
+                    <span className="typography-micro text-muted-foreground">{formatDate(event.createdAt)}</span>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </section>
+        ) : null}
         <div className="grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
           <LiveRunStream events={runEvents} />
           <section className="rounded-md border border-border bg-card p-4">
             <h2 className="text-xl font-semibold tracking-normal text-foreground">Terminal Bridge</h2>
             <p className="mt-2 typography-body text-muted-foreground">
-              Run `karen` for guarded prompts, `/tui` for live OpenCode interception, and `/gui` to reopen this control room.
+              Run `karen` for guarded prompts, `/tui` for live agent interception, and `/gui` to reopen this control room.
             </p>
             <div className="mt-4 grid gap-2">
               {commandCards.slice(0, 4).map((card) => (

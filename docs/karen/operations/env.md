@@ -40,10 +40,14 @@ Read by [`packages/karen/bin/karen.js`](../../../packages/karen/bin/karen.js).
 | `KAREN_AUDIO_CACHE_DIR` | `$XDG_CONFIG_HOME/openchamber/karen-audio-cache/terminal` | Override for the local audio cache directory. |
 | `KAREN_TUI_INTERCEPT` | `1` | Enable PromptCourt interception inside the OpenCode TUI. |
 | `KAREN_TUI_HEURISTIC_PROMPTS` | `1` | When TUI context is unknown, allow heuristic-based prompt judgment. |
+| `KAREN_OPENCODE_HOOK_MODE` | `auto` | Strategy for [`packages/karen/lib/opencode-hook.js`](../../../packages/karen/lib/opencode-hook.js): `auto` (use upstream hook when present, else PTY), `required` (refuse to fall back to PTY), `disabled` (no interception), or `pty` (PTY only). |
+| `KAREN_OPENCODE_HOOK` | unset | Alias accepted by the hook adapter when `KAREN_OPENCODE_HOOK_MODE` is unset. |
+| `KAREN_OPENCODE_HOOK_PACKAGE` | unset | Optional override for the upstream-hook package the adapter binds to. |
 | `KAREN_QUIZ_AI` | `1` if `OPENAI_API_KEY` set | Use OpenAI to generate read-check questions. |
 | `KAREN_QUIZ_MODEL` | `gpt-5.5` | Model used for AI-generated quizzes. |
 | `KAREN_QUIZ_REASONING_EFFORT` | `high` | Reasoning effort hint for the quiz model. |
 | `KAREN_QUIZ_TIMEOUT_MS` | `25000` | Per-request timeout for the AI quiz call. |
+| `KAREN_REPLAY_RENDERER` | `stub` | Set to `remotion` to use the Remotion-backed replay renderer in [`packages/web/server/lib/promptcourt/replay-video.js`](../../../packages/web/server/lib/promptcourt/replay-video.js); otherwise the stub JSON-manifest renderer is used. |
 
 ### Karen cloud
 

@@ -3,7 +3,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { evaluatePrompt, extractPromptText } from './evaluator.js';
+import { registerGuiRunRoutes } from './gui-run.js';
 import { redactPublicText } from './privacy.js';
+import { registerPromptCourtReplayVideoRoutes } from './replay-video-routes.js';
 import { createPromptCourtStore } from './storage.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -123,6 +125,8 @@ export const registerPromptCourtRoutes = (app, {
 }) => {
   const store = createPromptCourtStore({ openchamberDataDir });
   const jsonParser = express.json({ limit: '50mb' });
+  registerGuiRunRoutes(app, { express, store });
+  registerPromptCourtReplayVideoRoutes(app, { express, openchamberDataDir, store });
 
   app.get('/api/promptcourt/feed', (_req, res) => {
     res.json({ posts: store.getFeed() });

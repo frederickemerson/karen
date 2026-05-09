@@ -7,11 +7,11 @@ import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import net from 'node:net';
 import * as nodePty from 'node-pty';
-import ts from 'typescript';
 
 import { evaluatePrompt } from '../../web/server/lib/promptcourt/evaluator.js';
 import { redactPublicText } from '../../web/server/lib/promptcourt/privacy.js';
 import { createPromptCourtStore } from '../../web/server/lib/promptcourt/storage.js';
+import { analyzeDiffImpact, parseDiff } from '../lib/quiz-analyzer.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '../../..');
@@ -593,7 +593,7 @@ const printVerdict = (prompt, evaluation) => {
     line(evaluation.suggestedRewrite);
     const { post } = recordBlocked(prompt, evaluation);
     line('');
-    line(color(`Public record: ${post.id}`, 'red'));
+    line(post ? color(`Public record: ${post.id}`, 'red') : color('Public posting disabled by Karen privacy policy.', 'amber'));
   }
 };
 
@@ -726,7 +726,7 @@ const printTuiBlock = (prompt, evaluation) => {
   }
   line(color('Suggested appeal:', 'green'));
   line(evaluation.suggestedRewrite);
-  line(color(`Public record: ${post.id}`, 'red'));
+  line(post ? color(`Public record: ${post.id}`, 'red') : color('Public posting disabled by Karen privacy policy.', 'amber'));
   line(color('OpenCode did not receive Enter. Rewrite the prompt in the TUI input.', 'amber'));
   process.stdout.write('\r\n');
 };
@@ -989,282 +989,6 @@ const teachAfterDiscard = ({ prompt, generatedDiff, reason }) => {
   line('');
 };
 
-const parseDiff = (diff) => {
-  const files = [];
-  let current = null;
-  let oldLine = 0;
-  let newLine = 0;
-  const addedSymbols = new Set();
-  const removedSymbols = new Set();
-  let additions = 0;
-  let deletions = 0;
-
-  for (const diffLine of diff.split('\n')) {
-    if (diffLine.startsWith('diff --git ')) {
-      const match = diffLine.match(/^diff --git a\/(.+?) b\/(.+)$/);
-      current = {
-        path: match?.[2] || match?.[1] || 'unknown',
-        additions: 0,
-        deletions: 0,
-        hunks: [],
-        addedLines: [],
-        removedLines: [],
-        addedLineNumbers: [],
-        removedLineNumbers: [],
-      };
-      oldLine = 0;
-      newLine = 0;
-      files.push(current);
-      continue;
-    }
-
-    if (!current) continue;
-    if (diffLine.startsWith('@@')) {
-      const label = diffLine.replace(/^@@[^@]*@@\s*/, '').trim();
-      const match = diffLine.match(/^@@\s+-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@/);
-      oldLine = Number(match?.[1] || 0);
-      newLine = Number(match?.[2] || 0);
-      current.hunks.push(label || current.path);
-      continue;
-    }
-
-    if (diffLine.startsWith('+') && !diffLine.startsWith('+++')) {
-      const value = diffLine.slice(1).trim();
-      additions += 1;
-      current.additions += 1;
-      if (value) current.addedLines.push(value);
-      if (newLine > 0) current.addedLineNumbers.push(newLine);
-      newLine += 1;
-      for (const symbol of extractSymbols(value)) addedSymbols.add(symbol);
-    } else if (diffLine.startsWith('-') && !diffLine.startsWith('---')) {
-      const value = diffLine.slice(1).trim();
-      deletions += 1;
-      current.deletions += 1;
-      if (value) current.removedLines.push(value);
-      if (oldLine > 0) current.removedLineNumbers.push(oldLine);
-      oldLine += 1;
-      for (const symbol of extractSymbols(value)) removedSymbols.add(symbol);
-    } else if (diffLine.startsWith(' ') || diffLine === '') {
-      oldLine += 1;
-      newLine += 1;
-    }
-  }
-
-  return {
-    files,
-    additions,
-    deletions,
-    addedSymbols: [...addedSymbols],
-    removedSymbols: [...removedSymbols],
-  };
-};
-
-const extractSymbols = (lineText) => {
-  const symbols = [];
-  const patterns = [
-    /\b(?:export\s+)?(?:async\s+)?(?:function|class|interface|type|enum|def|struct|trait)\s+([A-Za-z_$][\w$-]*)/g,
-    /\b(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$-]*)\s*=\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>/g,
-    /\b([A-Za-z_$][\w$-]*)\s*[:=]\s*(?:async\s*)?\([^)]*\)\s*=>/g,
-    /\bfunc\s+(?:\([^)]+\)\s*)?([A-Za-z_$][\w$-]*)\s*\(/g,
-    /\bfn\s+([A-Za-z_$][\w$-]*)\s*\(/g,
-  ];
-
-  for (const pattern of patterns) {
-    for (const match of lineText.matchAll(pattern)) {
-      if (match[1]) symbols.push(match[1]);
-    }
-  }
-  return symbols;
-};
-
-const isTestFile = (filePath) => /(^|[/.])(?:test|spec)s?([/.]|$)|\.(?:test|spec)\.[cm]?[jt]sx?$/i.test(filePath);
-const isConfigFile = (filePath) => /(^|\/)(package\.json|tsconfig\.json|vite\.config\.[cm]?[jt]s|eslint\.config\.[cm]?[jt]s|convex\/schema\.ts|convex\/http\.ts|dockerfile|compose\.ya?ml|\.env\.example)$/i.test(filePath);
-
-const isJavaScriptLikeFile = (filePath) => /\.(?:[cm]?[jt]sx?)$/i.test(filePath);
-
-const sourceKindForFile = (filePath) => {
-  if (/\.tsx$/i.test(filePath)) return ts.ScriptKind.TSX;
-  if (/\.jsx$/i.test(filePath)) return ts.ScriptKind.JSX;
-  if (/\.ts$/i.test(filePath) || /\.mts$/i.test(filePath) || /\.cts$/i.test(filePath)) return ts.ScriptKind.TS;
-  return ts.ScriptKind.JS;
-};
-
-const nodeName = (node) => {
-  if (node.name && ts.isIdentifier(node.name)) return node.name.text;
-  if (node.name && ts.isStringLiteral(node.name)) return node.name.text;
-  return null;
-};
-
-const hasExportModifier = (node) => Boolean(ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Export);
-
-const lineNumberForPosition = (source, position) => source.getLineAndCharacterOfPosition(position).line + 1;
-
-const changedLineSetForFile = (file) => new Set([
-  ...file.addedLineNumbers,
-  ...file.removedLineNumbers,
-]);
-
-const nodeTouchesChangedLines = (source, node, changedLines) => {
-  if (!changedLines || changedLines.size === 0) return true;
-  const start = lineNumberForPosition(source, node.getStart(source));
-  const end = lineNumberForPosition(source, node.getEnd());
-  for (let lineNumber = start; lineNumber <= end; lineNumber += 1) {
-    if (changedLines.has(lineNumber)) return true;
-  }
-  return false;
-};
-
-const addEvidence = (target, key, value, evidence) => {
-  if (!value) return;
-  target[key].add(value);
-  if (!target.evidence.has(value)) target.evidence.set(value, evidence);
-};
-
-const parseJavaScriptImpact = ({ cwd, file }) => {
-  if (!cwd || !isJavaScriptLikeFile(file.path)) return null;
-  const absolutePath = path.join(cwd, file.path);
-  if (!absolutePath.startsWith(path.resolve(cwd))) return null;
-  let sourceText = '';
-  try {
-    sourceText = fs.readFileSync(absolutePath, 'utf8');
-  } catch {
-    return null;
-  }
-
-  const source = ts.createSourceFile(file.path, sourceText, ts.ScriptTarget.Latest, true, sourceKindForFile(file.path));
-  const exports = new Set();
-  const functions = new Set();
-  const imports = new Set();
-  const calls = new Set();
-  const evidence = new Map();
-  const changedLines = changedLineSetForFile(file);
-  const buckets = { exports, functions, imports, calls, evidence };
-
-  const visit = (node) => {
-    const touchesChange = nodeTouchesChangedLines(source, node, changedLines);
-    if (
-      ts.isFunctionDeclaration(node)
-      || ts.isClassDeclaration(node)
-      || ts.isInterfaceDeclaration(node)
-      || ts.isTypeAliasDeclaration(node)
-      || ts.isEnumDeclaration(node)
-    ) {
-      const name = nodeName(node);
-      if (name && touchesChange) {
-        const lineNumber = lineNumberForPosition(source, node.getStart(source));
-        addEvidence(buckets, 'functions', name, `${file.path}:${lineNumber}`);
-        if (hasExportModifier(node)) addEvidence(buckets, 'exports', name, `${file.path}:${lineNumber}`);
-      }
-    }
-
-    if (ts.isVariableStatement(node) && touchesChange) {
-      const exported = hasExportModifier(node);
-      for (const declaration of node.declarationList.declarations) {
-        const name = nodeName(declaration);
-        if (!name) continue;
-        const lineNumber = lineNumberForPosition(source, declaration.getStart(source));
-        if (
-          declaration.initializer
-          && (
-            ts.isArrowFunction(declaration.initializer)
-            || ts.isFunctionExpression(declaration.initializer)
-            || ts.isClassExpression(declaration.initializer)
-          )
-        ) {
-          addEvidence(buckets, 'functions', name, `${file.path}:${lineNumber}`);
-        }
-        if (exported) addEvidence(buckets, 'exports', name, `${file.path}:${lineNumber}`);
-      }
-    }
-
-    if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier) && touchesChange) {
-      addEvidence(buckets, 'imports', node.moduleSpecifier.text, `${file.path}:${lineNumberForPosition(source, node.getStart(source))}`);
-    }
-
-    if (ts.isExportDeclaration(node) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier) && touchesChange) {
-      addEvidence(buckets, 'imports', node.moduleSpecifier.text, `${file.path}:${lineNumberForPosition(source, node.getStart(source))}`);
-    }
-
-    if (ts.isCallExpression(node) && touchesChange) {
-      const expression = node.expression;
-      const callName = ts.isIdentifier(expression)
-        ? expression.text
-        : ts.isPropertyAccessExpression(expression)
-          ? expression.name.text
-          : '';
-      addEvidence(buckets, 'calls', callName, `${file.path}:${lineNumberForPosition(source, node.getStart(source))}`);
-    }
-
-    ts.forEachChild(node, visit);
-  };
-
-  visit(source);
-
-  return {
-    file: file.path,
-    exports: [...exports],
-    functions: [...functions],
-    imports: [...imports],
-    calls: [...calls],
-    evidence: Object.fromEntries(evidence.entries()),
-  };
-};
-
-const analyzeDiffImpact = (summary, { cwd = null } = {}) => {
-  const testFiles = summary.files.filter((file) => isTestFile(file.path)).map((file) => file.path);
-  const configFiles = summary.files.filter((file) => isConfigFile(file.path)).map((file) => file.path);
-  const exportedSymbols = [];
-  const changedFunctions = [];
-  const callSiteFiles = [];
-  const importedModules = [];
-  const calledSymbols = [];
-  const parsedFiles = [];
-  const evidence = new Map();
-
-  for (const file of summary.files) {
-    const astImpact = parseJavaScriptImpact({ cwd, file });
-    if (astImpact) {
-      parsedFiles.push(astImpact.file);
-      exportedSymbols.push(...astImpact.exports);
-      changedFunctions.push(...astImpact.functions);
-      importedModules.push(...astImpact.imports);
-      calledSymbols.push(...astImpact.calls);
-      for (const [key, value] of Object.entries(astImpact.evidence || {})) {
-        if (!evidence.has(key)) evidence.set(key, value);
-      }
-      if (!isTestFile(file.path) && astImpact.calls.length > 0) {
-        callSiteFiles.push(file.path);
-      }
-    }
-
-    const addedText = file.addedLines.join('\n');
-    const removedText = file.removedLines.join('\n');
-    const hasExport = /\bexport\s+(?:const|let|var|function|class|interface|type|enum)\b/.test(addedText);
-    if (hasExport) {
-      exportedSymbols.push(...file.addedLines.flatMap(extractSymbols));
-    }
-    const functionSymbols = file.addedLines
-      .concat(file.removedLines)
-      .flatMap(extractSymbols);
-    changedFunctions.push(...functionSymbols);
-    if (!isTestFile(file.path) && /\b(import|from|require\(|use\s+|new\s+[A-Z]|await\s+[A-Za-z_$])/m.test(addedText + '\n' + removedText)) {
-      callSiteFiles.push(file.path);
-    }
-  }
-
-  return {
-    testFiles: [...new Set(testFiles)],
-    configFiles: [...new Set(configFiles)],
-    exportedSymbols: [...new Set(exportedSymbols)],
-    changedFunctions: [...new Set(changedFunctions)],
-    callSiteFiles: [...new Set(callSiteFiles)],
-    importedModules: [...new Set(importedModules)],
-    calledSymbols: [...new Set(calledSymbols)],
-    parsedFiles: [...new Set(parsedFiles)],
-    evidence,
-  };
-};
-
 const uniqueOptions = (...groups) => {
   const seen = new Set();
   return groups.flat().filter((option) => {
@@ -1332,6 +1056,12 @@ const buildQuizEvidencePack = ({ prompt, summary, impact }) => {
       testFiles: impact.testFiles,
       configFiles: impact.configFiles,
       callSiteFiles: impact.callSiteFiles,
+      exportDetails: impact.exportDetails?.slice(0, 12) || [],
+      changedFunctionDetails: impact.changedFunctionDetails?.slice(0, 16) || [],
+      importDetails: impact.importDetails?.slice(0, 16) || [],
+      callSiteDetails: impact.callSiteDetails?.slice(0, 16) || [],
+      configImpact: impact.configImpact?.slice(0, 8) || [],
+      testCoverage: impact.testCoverage || null,
       evidence: Object.fromEntries(impact.evidence.entries()),
     },
   };

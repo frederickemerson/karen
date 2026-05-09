@@ -3,15 +3,23 @@ import { describe, expect, it } from 'vitest';
 import { evaluatePrompt, extractPromptText } from './evaluator.js';
 
 describe('promptcourt evaluator', () => {
-  it('blocks vague prompts before agent execution', () => {
-    const result = evaluatePrompt('fix this and make it better');
+  it('blocks prompts with no useful coding intent before agent execution', () => {
+    const result = evaluatePrompt('do your magic');
 
     expect(result.allowed).toBe(false);
     expect(result.verdict).toBe('blocked');
-    expect(result.score).toBeLessThan(70);
+    expect(result.score).toBeLessThan(40);
     expect(result.reasons).toContain('Vague language without operational detail');
     expect(result.suggestedRewrite).toContain('Scope:');
     expect(result.suggestedRewrite).toContain('Acceptance criteria:');
+  });
+
+  it('allows lazy but actionable coding prompts with warnings', () => {
+    const result = evaluatePrompt('fix this crash in the login flow');
+
+    expect(result.allowed).toBe(true);
+    expect(result.verdict).toBe('approved');
+    expect(result.reasons).toContain('Lazy prompt: allowed, but Karen will quiz harder');
   });
 
   it('approves prompts with scope, acceptance criteria, verification, and constraints', () => {
