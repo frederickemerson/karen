@@ -9,11 +9,21 @@ import {
   RiShieldCheckLine,
   RiTimerFlashLine,
 } from '@remixicon/react';
+import { SignInButton, SignedIn, SignedOut, UserButton } from '@clerk/clerk-react';
 
 import { DiffQuizShowcase } from './DiffQuizShowcase';
 import { KarenMascot } from './KarenMascot';
 import { KarenLogo } from './KarenLogo';
 import { KarenReplayTape } from './KarenReplayTape';
+import { isKarenAuthConfigured } from '@/lib/karenCloudConfig';
+
+// `VITE_PUBLIC_APP_URL` is the public URL of the OpenChamber app (the Express
+// server with /api/* and the GUI). On Vercel it points at the operator's ngrok
+// tunnel; in local development it is undefined and we fall back to in-app routes.
+const rawPublicAppUrl = (import.meta.env.VITE_PUBLIC_APP_URL as string | undefined) || '';
+const PUBLIC_APP_BASE = rawPublicAppUrl.replace(/\/$/, '');
+const APP_DASHBOARD_URL = PUBLIC_APP_BASE ? `${PUBLIC_APP_BASE}/karen` : '/karen';
+const APP_HAS_PUBLIC_URL = PUBLIC_APP_BASE.length > 0;
 
 const navItems = [
   ['Problem', '#problem'],
@@ -234,6 +244,51 @@ const RunFilm = () => (
   </div>
 );
 
+const KarenLandingAuthCta: React.FC = () => {
+  if (!isKarenAuthConfigured) {
+    return (
+      <a
+        href={APP_DASHBOARD_URL}
+        className="inline-flex items-center gap-2 rounded-sm bg-[#111] px-4 py-2 font-mono text-xs font-semibold text-[#f6f2e8]"
+      >
+        Dashboard <RiArrowRightLine className="size-4" />
+      </a>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-2">
+      <SignedOut>
+        <SignInButton mode="modal" forceRedirectUrl={APP_DASHBOARD_URL}>
+          <button
+            type="button"
+            className="rounded-sm border border-[#111] px-4 py-2 font-mono text-xs font-semibold text-[#111]"
+          >
+            Sign in
+          </button>
+        </SignInButton>
+        <SignInButton mode="modal" forceRedirectUrl={APP_DASHBOARD_URL}>
+          <button
+            type="button"
+            className="inline-flex items-center gap-2 rounded-sm bg-[#111] px-4 py-2 font-mono text-xs font-semibold text-[#f6f2e8]"
+          >
+            Sign up <RiArrowRightLine className="size-4" />
+          </button>
+        </SignInButton>
+      </SignedOut>
+      <SignedIn>
+        <a
+          href={APP_DASHBOARD_URL}
+          className="inline-flex items-center gap-2 rounded-sm bg-[#111] px-4 py-2 font-mono text-xs font-semibold text-[#f6f2e8]"
+        >
+          Open dashboard <RiArrowRightLine className="size-4" />
+        </a>
+        <UserButton afterSignOutUrl="/" />
+      </SignedIn>
+    </div>
+  );
+};
+
 export const KarenLandingPage: React.FC = () => {
   React.useEffect(() => {
     document.documentElement.classList.add('karen-document-scroll');
@@ -247,7 +302,7 @@ export const KarenLandingPage: React.FC = () => {
       <ScrollBar />
       <header className="sticky top-0 z-40 border-b border-[#d8d8d8] bg-[#f6f2e8]/90 backdrop-blur">
         <nav className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-4 sm:px-6 lg:px-8">
-          <a href="/karen/landing" className="flex items-center gap-3">
+          <a href="/" className="flex items-center gap-3">
             <KarenLogo className="size-10 border-[#111]" mood="mad" />
             <div className="font-mono text-sm font-semibold uppercase tracking-[0.14em]">Karen</div>
           </a>
@@ -256,9 +311,7 @@ export const KarenLandingPage: React.FC = () => {
               <a key={href} href={href} className="hover:text-[#111]">{label}</a>
             ))}
           </div>
-          <a href="/karen" className="inline-flex items-center gap-2 rounded-sm bg-[#111] px-4 py-2 font-mono text-xs font-semibold text-[#f6f2e8]">
-            Dashboard <RiArrowRightLine className="size-4" />
-          </a>
+          <KarenLandingAuthCta />
         </nav>
       </header>
 
@@ -274,11 +327,18 @@ export const KarenLandingPage: React.FC = () => {
                 Karen sits between your coding agent and your repo. She rejects lazy prompts, runs approved work in a sandbox, quizzes you on the diff, and rolls back code you cannot explain.
               </p>
               <div className="mt-8 flex flex-wrap gap-3">
-                <a href="/karen" className="rounded-sm bg-[#111] px-5 py-3 font-mono text-sm font-semibold text-[#f6f2e8]">
-                  Open GUI
+                <a
+                  href={APP_DASHBOARD_URL}
+                  className="inline-flex items-center gap-2 rounded-sm bg-[#111] px-5 py-3 font-mono text-sm font-semibold text-[#f6f2e8]"
+                >
+                  Try Karen now
+                  <RiArrowRightLine className="size-4" />
                 </a>
-                <a href="#cli" className="rounded-sm border border-[#111] px-5 py-3 font-mono text-sm font-semibold">
-                  See terminal flow
+                <a
+                  href="#cli"
+                  className="rounded-sm border border-[#111] px-5 py-3 font-mono text-sm font-semibold"
+                >
+                  Install locally
                 </a>
               </div>
             </motion.div>
@@ -404,12 +464,23 @@ export const KarenLandingPage: React.FC = () => {
         <section id="cli" className="border-t border-[#d8d8d8] bg-white px-4 py-16 sm:px-6 lg:px-8">
           <ScrollReveal className="mx-auto grid max-w-7xl gap-10 lg:grid-cols-[0.8fr_1.2fr]">
             <div>
-              <SectionLabel>one workflow</SectionLabel>
+              <SectionLabel>install</SectionLabel>
               <h2 className="mt-4 text-4xl font-semibold tracking-normal sm:text-5xl">
-                The terminal and GUI share the same run history.
+                Three commands to get Karen on your machine.
               </h2>
               <p className="mt-5 text-lg leading-8 text-[#4d4d4d]">
-                Use the terminal for live guarded execution. Use the GUI for launch, status, replay, profile, and proof. Same record, same score, same very disappointed grandma.
+                Karen runs local-first. Clone, install, and launch. The same profile syncs to your Karen account.
+              </p>
+              <div className="mt-6 rounded-md border border-[#111] bg-[#111] p-5 font-mono text-sm text-[#f6f2e8] shadow-[8px_8px_0_#111]">
+                <div className="text-[#6f6f6f]"># Requires Node 20+, Bun, and OpenCode CLI</div>
+                <div className="mt-2 text-[#7bd88f]">git clone https://github.com/frederickemerson/karen.git</div>
+                <div className="text-[#7bd88f]">cd karen</div>
+                <div className="text-[#7bd88f]">bun install</div>
+                <div className="text-[#7bd88f]">bun run install:karen</div>
+                <div className="text-[#7bd88f]">karen</div>
+              </div>
+              <p className="mt-4 text-sm leading-6 text-[#555]">
+                Prefer to try it without installing? <a href={APP_DASHBOARD_URL} className="underline">Open the hosted GUI</a>{APP_HAS_PUBLIC_URL ? ' served from a live demo workstation.' : '.'}
               </p>
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
