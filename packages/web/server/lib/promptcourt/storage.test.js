@@ -18,6 +18,12 @@ const createStore = () => createPromptCourtStore({
   cloudSync: { enabled: false },
 });
 
+const createStoreWithPrivacy = (privacyPolicy) => createPromptCourtStore({
+  openchamberDataDir: createTempDir(),
+  cloudSync: { enabled: false },
+  privacyPolicy,
+});
+
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -160,6 +166,54 @@ describe('promptcourt storage', () => {
       type: 'quiz_failed',
       title: 'Karen threw out generated code',
     });
+  });
+
+  it('redacts prompt and public post data at the storage boundary', () => {
+    const store = createStore();
+
+    const { session, post } = store.recordBlockedPrompt({
+      username: 'Security',
+      prompt: 'fix it with OPENAI_API_KEY=sk-abcdefghijklmnopqrstuvwxyz in /Users/frederick/app',
+      evaluation: blockedEvaluation,
+      publicPost: {
+        title: 'Blocked sk-abcdefghijklmnopqrstuvwxyz',
+        promptExcerpt: 'email test@example.com and use https://user:pass@example.com',
+        failureReasons: ['Authorization: Bearer abcdefghijklmnopqrstuvwxyz'],
+        suggestedRewrite: 'Remove token=ghp_abcdefghijklmnopqrstuvwxyz',
+      },
+    });
+
+    expect(session.prompt).not.toContain('sk-abcdefghijklmnopqrstuvwxyz');
+    expect(session.prompt).not.toContain('/Users/frederick');
+    expect(post.title).toBe('Blocked [redacted]');
+    expect(post.promptExcerpt).toBe('email [redacted:email] and use [redacted:url]');
+    expect(post.failureReasons[0]).toBe('Authorization: Bearer [redacted]');
+    expect(post.suggestedRewrite).toBe('Remove token=[redacted]');
+  });
+
+  it('can suppress public posts by policy while still recording the session', () => {
+    const store = createStoreWithPrivacy({
+      publicPostingEnabled: false,
+      secretScanningEnabled: true,
+      redactEmails: true,
+      redactUrls: 'all',
+    });
+
+    const { session, post } = store.recordBlockedPrompt({
+      username: 'Private',
+      prompt: 'OPENAI_API_KEY=sk-abcdefghijklmnopqrstuvwxyz',
+      evaluation: blockedEvaluation,
+      publicPost: {
+        title: 'Should not publish',
+        promptExcerpt: 'OPENAI_API_KEY=sk-abcdefghijklmnopqrstuvwxyz',
+        failureReasons: blockedEvaluation.reasons,
+      },
+    });
+
+    expect(session.status).toBe('blocked_bad_prompt');
+    expect(post).toBeNull();
+    expect(store.getFeed()).toEqual([]);
+    expect(store.getProfile('private').stats.publicFailureCount).toBe(0);
   });
 
   it('recovers from corrupt local state with an empty default profile', () => {
