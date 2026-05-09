@@ -14,6 +14,31 @@ describe('promptcourt evaluator', () => {
     expect(result.suggestedRewrite).toContain('Acceptance criteria:');
   });
 
+  it('suggests an immediately passing exploration rewrite for vague read-only prompts', () => {
+    const result = evaluatePrompt('go through the codebase');
+
+    expect(result.allowed).toBe(false);
+    expect(result.suggestedRewrite).toContain('Explore the codebase');
+    expect(result.suggestedRewrite).not.toContain('name the files');
+    expect(result.suggestedRewrite).not.toContain('list the exact user-visible behavior');
+
+    const appeal = evaluatePrompt(result.suggestedRewrite);
+    expect(appeal.allowed).toBe(true);
+    expect(appeal.intent).toBe('exploration');
+  });
+
+  it('suggests an immediately passing implementation rewrite for vague mutation prompts', () => {
+    const result = evaluatePrompt('fix this');
+
+    expect(result.allowed).toBe(false);
+    expect(result.suggestedRewrite).not.toContain('name the files');
+    expect(result.suggestedRewrite).not.toContain('list the exact user-visible behavior');
+
+    const appeal = evaluatePrompt(result.suggestedRewrite);
+    expect(appeal.allowed).toBe(true);
+    expect(appeal.verdict).toBe('approved');
+  });
+
   it('allows lazy but actionable coding prompts with warnings', () => {
     const result = evaluatePrompt('fix this crash in the login flow');
 

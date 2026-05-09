@@ -227,13 +227,24 @@ const scorePrompt = (rawPrompt) => {
 
 const buildSuggestedRewrite = (prompt, reasons) => {
   const topic = prompt.length > 0 ? prompt.slice(0, 96) : 'the requested change';
+  const readOnlyIntent = /\b(go through|explore|inspect|browse|tour|survey|review|audit|study|map|analy[sz]e|summari[sz]e|explain|walk\s+through)\b/i.test(topic)
+    && !MUTATION_VERBS.test(topic);
+  if (readOnlyIntent) {
+    return [
+      `Explore the codebase for: ${topic}`,
+      'Scope: read-only survey of the repository structure, package scripts, entrypoints, and the most relevant modules you find.',
+      'Acceptance criteria: return a concise map of the main subsystems, where the requested behavior likely lives, and the next concrete files to inspect or change.',
+      'Verification: do not edit files; cite the files or commands you inspected so I can verify the walkthrough.',
+      'Constraints: do not modify code, install dependencies, start long-running servers, or change configuration.',
+    ].join('\n');
+  }
   return [
     `Implement: ${topic}`,
-    'Scope: name the files, route, component, or subsystem the agent may touch.',
-    'Acceptance criteria: list the exact user-visible behavior that must be true.',
-    'Verification: say which tests, type checks, lint, build, or manual checks should pass.',
+    'Scope: inspect the repository to find the relevant files, then limit edits to the smallest route, component, module, or test files needed for this request.',
+    'Acceptance criteria: the requested behavior works end-to-end, the original broken behavior no longer reproduces, and unrelated visible behavior stays the same.',
+    'Verification: run the focused tests for touched files; if no focused test exists, run the nearest package test or build command and report the exact command output.',
     reasons.includes('No constraints for risky or unrelated changes')
-      ? 'Constraints: call out what must not change.'
+      ? 'Constraints: do not change unrelated providers, auth, storage formats, public APIs, or styling outside the touched flow.'
       : null,
   ].filter(Boolean).join('\n');
 };
