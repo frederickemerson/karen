@@ -1269,8 +1269,6 @@ const main = async () => {
     return;
   }
 
-  drawShell();
-
   const handlePrompt = async (prompt) => {
     maybeScreamAtLongPrompt(prompt);
     const evaluation = evaluatePrompt(prompt);
@@ -1288,7 +1286,12 @@ const main = async () => {
 
   if (initialPrompt) {
     await handlePrompt(initialPrompt);
+    rl.close();
+    await sleep(50);
+    return;
   }
+
+  drawShell();
 
   let active = true;
   while (active) {
