@@ -15,7 +15,31 @@ The terminal is the product. The web surface is the scoreboard.
 
 ## Install
 
-Requires [OpenCode CLI](https://opencode.ai), Node 20+, and [Bun](https://bun.sh).
+One line. Requires [OpenCode CLI](https://opencode.ai), Node 20+, and `git`. Bun is installed automatically if missing.
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/frederickemerson/karen/main/install.sh | sh
+```
+
+This clones Karen to `~/.karen`, installs dependencies, and writes a `karen` launcher to `~/.local/bin`. Re-run any time to update — it pulls the latest `main` and rewrites the launcher.
+
+Overrides:
+
+```sh
+KAREN_HOME=~/code/karen \
+  KAREN_INSTALL_DIR=/usr/local/bin \
+  curl -fsSL https://raw.githubusercontent.com/frederickemerson/karen/main/install.sh | sh
+```
+
+If your shell can't find `karen` after install:
+
+```sh
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+### From source
+
+If you'd rather clone manually:
 
 ```sh
 git clone https://github.com/frederickemerson/karen.git
@@ -23,14 +47,6 @@ cd karen
 bun install
 bun run install:karen
 karen
-```
-
-The installer writes a `karen` launcher to `~/.local/bin` by default. Override with `--dir` or `KAREN_INSTALL_DIR`.
-
-If your shell can't find `karen`:
-
-```sh
-export PATH="$HOME/.local/bin:$PATH"
 ```
 
 ### Installer commands

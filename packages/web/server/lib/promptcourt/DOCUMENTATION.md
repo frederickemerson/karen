@@ -10,12 +10,13 @@ The server-side policy boundary for Karen. PromptCourt scores prompts, stores ve
 
 ## Agent TL;DR
 
-- Eight focused files, one responsibility each. Keep them that way.
+- Eleven focused files, one responsibility each. Keep them that way.
 - The evaluator is the source of truth for verdicts. Do not derive verdicts elsewhere.
 - Privacy redaction in [`privacy.js`](privacy.js) runs before any value is recorded or shipped to the cloud.
 - Cloud sync is fire-and-forget. Storage must succeed locally even when Convex is offline.
 - HTTP composition is layered: [`routes.js`](routes.js) is the parent registrar; it calls [`registerGuiRunRoutes`](gui-run.js) and [`registerPromptCourtReplayVideoRoutes`](replay-video-routes.js) so the inherited Express bootstrap only needs `registerPromptCourtRoutes(app, ...)`.
 - Browser-launched runs go through the GUI runtime in [`gui-run.js`](gui-run.js), which evaluates first, records locally, and only then queues the run. Replay export is owned by [`replay-video.js`](replay-video.js).
+- Quiz building is shared between the CLI and GUI: [`quiz.js`](quiz.js) wraps the AI-backed and parser-fallback question generators; [`quiz-analyzer.js`](quiz-analyzer.js) does the AST-aware diff impact analysis; [`diff-synthesizer.js`](diff-synthesizer.js) generates a plausible diff for GUI runs (with deterministic fixture fallback) so the quiz has something to ground itself in.
 
 ## Purpose
 
@@ -23,7 +24,10 @@ Encapsulate every server-side decision Karen makes about a prompt: judgment, rec
 
 ## Files
 
-- [`evaluator.js`](evaluator.js) - prompt scoring. Exports `evaluatePrompt(prompt)` returning `{ score, verdict, allowed, reasons, dimensions, suggestedRewrite }`, plus `extractPromptText(body)` for OpenCode-shaped request bodies. Score < 70 produces `verdict='blocked'`. Reasons explain the charges.
+- [`evaluator.js`](evaluator.js) - prompt scoring. Exports `evaluatePrompt(prompt)` returning `{ score, verdict, allowed, intent, reasons, dimensions, suggestedRewrite }`, plus `extractPromptText(body)` for OpenCode-shaped request bodies. A fast-path classifier short-circuits conversational greetings (`intent='conversational'`) and read-only exploration prompts (`intent='exploration'`) to `approved` without scoring; everything else falls through to the dimensional scorer where score < ~25 (or hopeless without concrete intent) produces `verdict='blocked'`. Reasons explain the charges.
+- [`quiz.js`](quiz.js) - shared quiz builder used by the Karen CLI and the GUI runtime. Exports `buildQuiz({ prompt, generatedDiff, onAiFallback? })` (returns `{ source, questions, summary }`) plus the env-driven flags `quizAiAllowed`, `quizModel`, `quizReasoningEffort`, `quizTimeoutMs`. Internally calls `buildAiQuiz` when an OpenAI key is present and `KAREN_QUIZ_AI` is not disabled; falls back to `buildParserQuiz` (deterministic, evidence-driven) on failure or when AI is off. Reads `OPENAI_API_KEY`, `KAREN_QUIZ_MODEL` (default `gpt-5.5-pro`), `KAREN_QUIZ_REASONING_EFFORT`, and `KAREN_QUIZ_TIMEOUT_MS`.
+- [`quiz-analyzer.js`](quiz-analyzer.js) - TypeScript-AST-backed diff analyzer. Exports `parseDiff(diff)`, `analyzeQuizEvidence(summary, { cwd })` (aliased as `analyzeDiffImpact`), and helpers (`isTestFile`, `isConfigFile`, `isJavaScriptLikeFile`, `extractSymbols`). Produces test-coverage mapping, exported/changed-symbol sets, call-site detail, and config-impact evidence used by `quiz.js` to build evidence-grounded questions. Lives here (not in `packages/karen/lib/`) so the CLI and GUI quizzes share the same analysis.
+- [`diff-synthesizer.js`](diff-synthesizer.js) - GUI-only diff generator. Exports `synthesizeGuiDiff({ prompt })` returning `{ diff, source, note }`. Calls OpenAI with a system prompt to produce a plausible unified diff for the user's prompt; falls back to a deterministic `FIXTURE_DIFF` when no key is present, the model returns non-diff content, or the call fails. The Karen CLI does not use this — it operates against real worktree diffs.
 - [`storage.js`](storage.js) - local JSON store at `$XDG_CONFIG_HOME/openchamber/promptcourt.json`. Exports `createPromptCourtStore({ openchamberDataDir, cloudSync? })` returning a store with `recordBlockedPrompt`, `recordApprovedPrompt`, `recordQuizResult`, `recordRunEvent`, `getRunEvents`, `cleanupDevRecords`, `getFeed`, `getProfile`, `getOverview`, and `normalizeUsername`. Atomic writes via temp-file rename. Computes derived profile stats (discipline score, level, streaks, rewards).
 - [`privacy.js`](privacy.js) - `redactPublicText(value, maxLength)` redacts API keys, tokens, secrets, OpenAI/GitHub key shapes, emails, URLs, and `/Users/...` / `C:\Users\...` paths. Truncates with an ellipsis. Used everywhere a prompt or post excerpt crosses a boundary.
 - [`cloud.js`](cloud.js) - Convex sync. Exports `createPromptCourtCloudSync({ env, fetchImpl, loadEnvFiles })` returning `{ enabled, send, recordBlockedPrompt, recordApprovedPrompt, recordQuizResult }`. Reads `KAREN_CLOUD_SYNC`, `CONVEX_HTTP_ACTIONS_URL` (and Vite/site aliases), and `KAREN_CLOUD_INGEST_SECRET`. POSTs JSON to `<endpoint>/karen/ingest` with `Authorization: Bearer <secret>`. Errors are swallowed and only logged when `KAREN_CLOUD_DEBUG=1`.
@@ -118,8 +122,9 @@ graph TD
 - [`privacy.test.js`](privacy.test.js) - redaction patterns, truncation, path scrubbing.
 - [`cloud.test.js`](cloud.test.js) - env-driven enablement, endpoint normalization, ingest secret header, fire-and-forget error handling.
 - [`routes.test.js`](routes.test.js) - HTTP route shapes, blocked vs approved verdicts, terminal launcher fallback paths, admin auth, SSE flushing.
-- [`gui-run.test.js`](gui-run.test.js) - GUI-run lifecycle (queued -> judging -> blocked / running -> quiz_required), recording side effects, listener and waiter contracts.
+- [`gui-run.test.js`](gui-run.test.js) - GUI-run lifecycle (queued -> judging -> blocked / running -> quiz_required, plus the conversational/exploration `completed` short-circuit and the answer/finalize quiz flow), recording side effects, listener and waiter contracts.
 - [`replay-video.test.js`](replay-video.test.js) - replay contract building, step normalization, outcome inference, stub renderer output, Remotion renderer error path.
+- [`diff-synthesizer.test.js`](diff-synthesizer.test.js) - synthesizer fallbacks (no API key, empty prompt, model returns non-diff), valid model-produced diff, code-fence stripping.
 
 Run from repo root:
 

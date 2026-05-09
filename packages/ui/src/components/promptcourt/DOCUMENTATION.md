@@ -10,7 +10,7 @@ Karen's web scoreboard. The CLI is the product; this surface renders the public 
 
 ## Agent TL;DR
 
-- 14 components. `KarenCloudProvider` wraps the tree with Convex + Clerk; `PromptCourtPage` is the live profile page; `KarenLandingPage` is the marketing page; everything else is a showcase or panel mounted into one of those two pages.
+- 15 components. `KarenCloudProvider` wraps the tree with Convex + Clerk; `PromptCourtPage` is the live profile page; `KarenLandingPage` is the marketing page; everything else is a showcase, panel, or modal mounted into one of those two pages.
 - All Karen color intent comes from [`../../../../../docs/karen/03-design.md`](../../../../../docs/karen/03-design.md). Use the inherited theme tokens; do not hardcode hex values.
 - Live data sources: Convex queries via `useQuery` from `convex/react`, plus the inherited `/api/promptcourt/*` HTTP routes for run streams. Never derive verdicts client-side.
 - This surface inherits the OpenChamber app shell, theming, and primitives ([Base UI](https://base-ui.com/), Tailwind v4, the typography helpers in `packages/ui/src/lib/typography.ts`).
@@ -22,7 +22,8 @@ Make Karen's records public, glanceable, and arcade-shaped. Convert PromptCourt'
 
 ## Files
 
-- [`PromptCourtPage.tsx`](PromptCourtPage.tsx) - the live profile page. Composes `LaunchControls`, `LiveRunStream`, `RecentSessions`, `ProfilePanel`, `BadPromptGraveyard`, `ProofProfileCard`. Subscribes to `/api/promptcourt/runs/events` SSE for the global live run stream and, when launching a guarded run from the browser, to `/api/promptcourt/gui-runs/:runId/events` for that run's lifecycle. Reads PromptCourt overview/profile data from Convex when configured and falls back to local data when not.
+- [`PromptCourtPage.tsx`](PromptCourtPage.tsx) - the live profile page. Composes `LaunchControls`, `LiveRunStream`, `RecentSessions`, `ProfilePanel`, `BadPromptGraveyard`, `ProofProfileCard`, and the auto-mounting `KarenQuizGameModal`. Subscribes to `/api/promptcourt/runs/events` SSE for the global live run stream and, when launching a guarded run from the browser, to `/api/promptcourt/gui-runs/:runId/events` for that run's lifecycle. Auto-opens `KarenQuizGameModal` once per run when status hits `quiz_required`. Reads PromptCourt overview/profile data from Convex when configured and falls back to local data when not.
+- [`KarenQuizGameModal.tsx`](KarenQuizGameModal.tsx) - full-screen Kahoot-style quiz overlay shown when a GUI run reaches `quiz_required`. Reads the diff and questions off the run, plays a Kahoot-inspired music loop, speaks each question through the Karen ElevenLabs TTS proxy (with browser TTS fallback), and walks the user through `intro` → `question` → `wrong`/`passed` stages. Submits answers, completion, and abandonment via `submitGuiAnswer`, `completeGuiQuiz`, and `abandonGuiQuiz` from `../../../lib/promptcourt.ts`.
 - [`KarenLandingPage.tsx`](KarenLandingPage.tsx) - the public marketing page. Assembles the courtroom showcase, replay tape, badge wall, leaderboard, voice panel, and graveyard into a single scrollable surface.
 - [`KarenCloudProvider.tsx`](KarenCloudProvider.tsx) - root provider. Wraps children in `ConvexProviderWithClerk` (when configured) or a no-op fallback. Reads `VITE_CONVEX_URL` and `VITE_CLERK_PUBLISHABLE_KEY`.
 - [`BadPromptGraveyard.tsx`](BadPromptGraveyard.tsx) - card-grid view of blocked-prompt public posts with score-tone classes (awful, weak, appeal) and a share button that copies a redacted excerpt.
