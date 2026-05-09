@@ -17,13 +17,7 @@ import { KarenLogo } from './KarenLogo';
 import { KarenReplayTape } from './KarenReplayTape';
 import { isKarenAuthConfigured } from '@/lib/karenCloudConfig';
 
-// `VITE_PUBLIC_APP_URL` is the public URL of the OpenChamber app (the Express
-// server with /api/* and the GUI). On Vercel it points at the operator's ngrok
-// tunnel; in local development it is undefined and we fall back to in-app routes.
-const rawPublicAppUrl = (import.meta.env.VITE_PUBLIC_APP_URL as string | undefined) || '';
-const PUBLIC_APP_BASE = rawPublicAppUrl.replace(/\/$/, '');
-const APP_DASHBOARD_URL = PUBLIC_APP_BASE ? `${PUBLIC_APP_BASE}/karen` : '/karen';
-const APP_HAS_PUBLIC_URL = PUBLIC_APP_BASE.length > 0;
+const REPO_URL = 'https://github.com/frederickemerson/karen';
 
 const navItems = [
   ['Problem', '#problem'],
@@ -248,10 +242,12 @@ const KarenLandingAuthCta: React.FC = () => {
   if (!isKarenAuthConfigured) {
     return (
       <a
-        href={APP_DASHBOARD_URL}
+        href={REPO_URL}
+        target="_blank"
+        rel="noopener noreferrer"
         className="inline-flex items-center gap-2 rounded-sm bg-[#111] px-4 py-2 font-mono text-xs font-semibold text-[#f6f2e8]"
       >
-        Dashboard <RiArrowRightLine className="size-4" />
+        GitHub <RiArrowRightLine className="size-4" />
       </a>
     );
   }
@@ -259,7 +255,7 @@ const KarenLandingAuthCta: React.FC = () => {
   return (
     <div className="flex items-center gap-2">
       <SignedOut>
-        <SignInButton mode="modal" forceRedirectUrl={APP_DASHBOARD_URL}>
+        <SignInButton mode="modal" forceRedirectUrl="/promptcourt">
           <button
             type="button"
             className="rounded-sm border border-[#111] px-4 py-2 font-mono text-xs font-semibold text-[#111]"
@@ -267,7 +263,7 @@ const KarenLandingAuthCta: React.FC = () => {
             Sign in
           </button>
         </SignInButton>
-        <SignInButton mode="modal" forceRedirectUrl={APP_DASHBOARD_URL}>
+        <SignInButton mode="modal" forceRedirectUrl="/promptcourt">
           <button
             type="button"
             className="inline-flex items-center gap-2 rounded-sm bg-[#111] px-4 py-2 font-mono text-xs font-semibold text-[#f6f2e8]"
@@ -278,10 +274,10 @@ const KarenLandingAuthCta: React.FC = () => {
       </SignedOut>
       <SignedIn>
         <a
-          href={APP_DASHBOARD_URL}
+          href="/promptcourt"
           className="inline-flex items-center gap-2 rounded-sm bg-[#111] px-4 py-2 font-mono text-xs font-semibold text-[#f6f2e8]"
         >
-          Open dashboard <RiArrowRightLine className="size-4" />
+          My profile <RiArrowRightLine className="size-4" />
         </a>
         <UserButton afterSignOutUrl="/" />
       </SignedIn>
@@ -328,17 +324,19 @@ export const KarenLandingPage: React.FC = () => {
               </p>
               <div className="mt-8 flex flex-wrap gap-3">
                 <a
-                  href={APP_DASHBOARD_URL}
+                  href="#cli"
                   className="inline-flex items-center gap-2 rounded-sm bg-[#111] px-5 py-3 font-mono text-sm font-semibold text-[#f6f2e8]"
                 >
-                  Try Karen now
+                  Install Karen
                   <RiArrowRightLine className="size-4" />
                 </a>
                 <a
-                  href="#cli"
+                  href={REPO_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
                   className="rounded-sm border border-[#111] px-5 py-3 font-mono text-sm font-semibold"
                 >
-                  Install locally
+                  View on GitHub
                 </a>
               </div>
             </motion.div>
@@ -480,7 +478,7 @@ export const KarenLandingPage: React.FC = () => {
                 <div className="text-[#7bd88f]">karen</div>
               </div>
               <p className="mt-4 text-sm leading-6 text-[#555]">
-                Prefer to try it without installing? <a href={APP_DASHBOARD_URL} className="underline">Open the hosted GUI</a>{APP_HAS_PUBLIC_URL ? ' served from a live demo workstation.' : '.'}
+                Questions or issues? <a href={REPO_URL} target="_blank" rel="noopener noreferrer" className="underline">Open a GitHub issue</a> or star the repo to follow along.
               </p>
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
