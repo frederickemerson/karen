@@ -8,13 +8,11 @@ import { isKarenCloudConfigured } from '@/lib/karenCloudConfig';
 import { KarenLogo } from './KarenLogo';
 import { LandingAuthCta } from './landing/LandingAuthCta';
 import { Home } from './landing/Home';
-import { HowItWorks } from './landing/HowItWorks';
 import { Scoreboard } from './landing/Scoreboard';
 import { Install } from './landing/Install';
 
 const navItems = [
   ['Home', '/'],
-  ['How it works', '/how-it-works'],
   ['Scoreboard', '/scoreboard'],
   ['Install', '/install'],
 ] as const;
@@ -55,7 +53,6 @@ const LandingShell: React.FC<{ overview?: PromptCourtOverview | null }> = ({ ove
       <main>
         <Routes>
           <Route path="/" element={<Home />} />
-          <Route path="/how-it-works" element={<HowItWorks />} />
           <Route path="/scoreboard" element={<Scoreboard overview={overview} />} />
           <Route path="/install" element={<Install />} />
         </Routes>

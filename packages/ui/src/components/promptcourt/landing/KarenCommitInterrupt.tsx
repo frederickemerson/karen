@@ -19,20 +19,13 @@ const taskMasterRounds: QuizRound[] = [
 export const KarenCommitInterrupt: React.FC<{ className?: string }> = ({ className = '' }) => {
   return (
     <section className={`grid gap-4 ${className}`}>
-      <div className="rounded-md border border-[#17130f] bg-[#111] p-4 font-mono text-sm text-[#f8f1e3] shadow-[8px_8px_0_#17130f]">
-        <div className="text-[#7bd88f]">$ git commit -m \"feat(tasks): make Task implement Schedulable\"</div>
-        <div className="mt-4 rounded-sm border border-white/15 bg-black/40 p-3 text-xs leading-6">
-          <div className="text-[#c9bca8]">diff --git a/apps/taskmaster/src/domain/task.ts b/apps/taskmaster/src/domain/task.ts</div>
-          <div className="text-[#ff8a80]">- export interface Task {'{'} id: string; title: string; {'}'}</div>
-          <div className="text-[#7bd88f]">+ export interface Schedulable {'{'} scheduledFor: string; {'}'}</div>
-          <div className="text-[#7bd88f]">+ export interface Task extends Schedulable {'{'} id: string; title: string; {'}'}</div>
-        </div>
-        <div className="mt-3 text-[#ffcc66]">KAREN: commit interrupted. Answer the diff quiz first.</div>
+      <div className="rounded-md border border-[#17130f] bg-[#111] p-4 font-mono text-xs uppercase tracking-[0.14em] text-[#ffcc66] shadow-[8px_8px_0_#17130f]">
+        click the wrong answer
       </div>
 
       <DiffQuizShowcase
         rounds={taskMasterRounds}
-        onWrongAnswerCaption="The sandbox gets tossed. git reset --hard origin/main. Tweet queued: @karen-code."
+        onWrongAnswerCaption="Wrong answer. We just git reset --hard."
       />
     </section>
   );
