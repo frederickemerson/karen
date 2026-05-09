@@ -15,6 +15,7 @@ import type {
 import type { PermissionRequest } from "@/types/permission";
 import type { QuestionRequest } from "@/types/question";
 import { waitForWorktreeBootstrap } from "@/lib/worktrees/worktreeBootstrap";
+import { getPromptCourtUsername } from "@/lib/promptcourt";
 import {
   assertProviderCircuitClosed,
   recordProviderSuccess,
@@ -787,6 +788,7 @@ class OpencodeService {
           headers: {
             'content-type': 'application/json',
             accept: 'application/json',
+            'x-promptcourt-user': getPromptCourtUsername(),
           },
           body: JSON.stringify({
             model: {

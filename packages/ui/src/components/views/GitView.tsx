@@ -60,6 +60,8 @@ import { HistorySection } from './git/HistorySection';
 import { PullRequestSection } from './git/PullRequestSection';
 import { ConflictDialog } from './git/ConflictDialog';
 import { StashDialog } from './git/StashDialog';
+import { CodeReadQuizModal } from './git/CodeReadQuizModal';
+import { KarenLogo } from '@/components/promptcourt/KarenLogo';
 import { InProgressOperationBanner } from './git/InProgressOperationBanner';
 import { BranchIntegrationSection, type OperationLogEntry } from './git/BranchIntegrationSection';
 import type { GitRemote } from '@/lib/gitApi';
@@ -71,6 +73,14 @@ import { useI18n } from '@/lib/i18n';
 
 type SyncAction = 'fetch' | 'pull' | 'push' | 'sync' | null;
 type CommitAction = 'commit' | 'commitAndPush' | null;
+type CommitReadCheckState = {
+  open: boolean;
+  options: { pushAfter?: boolean };
+  files: string[];
+  diffText: string;
+  loadingDiff: boolean;
+  diffError: string | null;
+};
 type BranchOperation = 'merge' | 'rebase' | null;
 type ActionTab = 'commit' | 'branch' | 'pr';
 type HistoryBranchDivider = {
@@ -83,6 +93,28 @@ const GIT_ACTION_TAB_STORAGE_KEY = 'oc.git.actionTab';
 
 const isActionTab = (value: unknown): value is ActionTab =>
   value === 'commit' || value === 'branch' || value === 'pr';
+
+const KarenGitPanel: React.FC<{ selectedCount: number; changedCount: number }> = ({ selectedCount, changedCount }) => (
+  <div className="rounded-md border border-border bg-card p-3">
+    <div className="flex items-center gap-3">
+      <KarenLogo className="size-12 shrink-0" mood={changedCount > 12 ? 'mad' : 'calm'} />
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="typography-ui-label font-semibold text-foreground">Karen is attached to Git</span>
+          <span className="rounded-sm bg-[var(--status-warning)]/15 px-1.5 py-0.5 typography-micro font-medium text-[var(--status-warning)]">
+            code-read gate on
+          </span>
+        </div>
+        <p className="mt-1 typography-micro text-muted-foreground">
+          Commits require the Kahoot-style read check. {selectedCount} selected of {changedCount} changed files.
+        </p>
+      </div>
+      <a className="typography-micro text-primary hover:underline" href="/karen">
+        GUI
+      </a>
+    </div>
+  </div>
+);
 
 
 type GitViewSnapshot = {
@@ -430,6 +462,7 @@ export const GitView: React.FC = () => {
   const [syncAction, setSyncAction] = React.useState<SyncAction>(null);
   const [isStashesDialogOpen, setIsStashesDialogOpen] = React.useState(false);
   const [commitAction, setCommitAction] = React.useState<CommitAction>(null);
+  const [commitReadCheck, setCommitReadCheck] = React.useState<CommitReadCheckState | null>(null);
   const [logMaxCountLocal, setLogMaxCountLocal] = React.useState<number>(25);
   const [isSettingIdentity, setIsSettingIdentity] = React.useState(false);
   const { triggerFireworks } = useFireworksCelebration();
@@ -1028,7 +1061,53 @@ export const GitView: React.FC = () => {
     }
   }, [currentDirectory, git, refreshRemotes, refreshStatusAndBranches, t]);
 
-  const handleCommit = async (options: { pushAfter?: boolean } = {}) => {
+  const startCommitReadCheck = React.useCallback(async (
+    options: { pushAfter?: boolean },
+    filesToCommit: string[],
+  ) => {
+    if (!currentDirectory) return;
+
+    setCommitReadCheck({
+      open: true,
+      options,
+      files: filesToCommit,
+      diffText: '',
+      loadingDiff: true,
+      diffError: null,
+    });
+
+    try {
+      const diffChunks = await Promise.all(filesToCommit.map(async (filePath) => {
+        const response = await git.getGitDiff(currentDirectory, {
+          path: filePath,
+          staged: false,
+          contextLines: 80,
+        });
+        return `# ${filePath}\n${response.diff || 'No textual diff available.'}`;
+      }));
+      setCommitReadCheck((current) => current
+        ? {
+            ...current,
+            diffText: diffChunks.join('\n\n'),
+            loadingDiff: false,
+            diffError: null,
+          }
+        : current);
+    } catch (error) {
+      setCommitReadCheck((current) => current
+        ? {
+            ...current,
+            loadingDiff: false,
+            diffError: error instanceof Error ? error.message : 'Failed to load selected code diff',
+          }
+        : current);
+    }
+  }, [currentDirectory, git]);
+
+  const handleCommit = async (
+    options: { pushAfter?: boolean } = {},
+    runtimeOptions: { skipReadCheck?: boolean } = {},
+  ) => {
     if (!currentDirectory) return;
     if (!commitMessage.trim()) {
       toast.error(t('gitView.toast.enterCommitMessage'));
@@ -1038,6 +1117,11 @@ export const GitView: React.FC = () => {
     const filesToCommit = Array.from(selectedPaths).sort();
     if (filesToCommit.length === 0) {
       toast.error(t('gitView.toast.selectFileToCommit'));
+      return;
+    }
+
+    if (!runtimeOptions.skipReadCheck) {
+      await startCommitReadCheck(options, filesToCommit);
       return;
     }
 
@@ -2141,8 +2225,24 @@ export const GitView: React.FC = () => {
     );
   }
 
+  const handleCodeReadPassed = () => {
+    const options = commitReadCheck?.options ?? {};
+    setCommitReadCheck(null);
+    void handleCommit(options, { skipReadCheck: true });
+  };
+
   return (
     <div className={cn('flex h-full flex-col overflow-hidden', 'bg-sidebar')}>
+      <CodeReadQuizModal
+        open={commitReadCheck?.open === true}
+        files={commitReadCheck?.files ?? []}
+        commitMessage={commitMessage}
+        diffText={commitReadCheck?.diffText ?? ''}
+        loadingDiff={commitReadCheck?.loadingDiff === true}
+        diffError={commitReadCheck?.diffError ?? null}
+        onClose={() => setCommitReadCheck(null)}
+        onPassed={handleCodeReadPassed}
+      />
           <GitHeader
         status={status}
         localBranches={localBranches}
@@ -2199,6 +2299,10 @@ export const GitView: React.FC = () => {
                 <div className="space-y-4">
                   {(changeEntries?.length ?? 0) > 0 ? (
                     <>
+                      <KarenGitPanel
+                        selectedCount={selectedCount}
+                        changedCount={changeEntries?.length ?? 0}
+                      />
                       <ChangesSection
                         maxListHeightClassName="max-h-[40vh]"
                         changeEntries={changeEntries}

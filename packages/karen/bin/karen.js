@@ -1,0 +1,1415 @@
+#!/usr/bin/env node
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import readline from 'node:readline/promises';
+import { spawn, spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import net from 'node:net';
+import * as nodePty from 'node-pty';
+import ts from 'typescript';
+
+import { evaluatePrompt } from '../../web/server/lib/promptcourt/evaluator.js';
+import { redactPublicText } from '../../web/server/lib/promptcourt/privacy.js';
+import { createPromptCourtStore } from '../../web/server/lib/promptcourt/storage.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const root = path.resolve(__dirname, '../../..');
+const karenPackagePath = path.resolve(__dirname, '../package.json');
+const configHome = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
+const openchamberDataDir = path.join(configHome, 'openchamber');
+const store = createPromptCourtStore({ openchamberDataDir });
+
+const expandHome = (value) => {
+  if (!value || typeof value !== 'string') return null;
+  if (value === '~') return os.homedir();
+  if (value.startsWith('~/')) return path.join(os.homedir(), value.slice(2));
+  return value;
+};
+
+const ansi = {
+  reset: '\x1b[0m',
+  bold: '\x1b[1m',
+  dim: '\x1b[2m',
+  red: '\x1b[38;5;203m',
+  green: '\x1b[38;5;120m',
+  cyan: '\x1b[38;5;81m',
+  amber: '\x1b[38;5;221m',
+  pink: '\x1b[38;5;213m',
+  gray: '\x1b[38;5;245m',
+  bgRed: '\x1b[48;5;203m\x1b[38;5;16m',
+  bgGreen: '\x1b[48;5;120m\x1b[38;5;16m',
+  bgBlue: '\x1b[48;5;39m\x1b[38;5;15m',
+  bgYellow: '\x1b[48;5;221m\x1b[38;5;16m',
+};
+
+const color = (value, tone) => process.stdout.isTTY ? `${ansi[tone] || ''}${value}${ansi.reset}` : value;
+const line = (value = '') => process.stdout.write(`${value}\n`);
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const envEnabled = (name, defaultValue = true) => {
+  const value = process.env[name];
+  if (value == null || value === '') return defaultValue;
+  return !['0', 'false', 'off', 'no'].includes(String(value).trim().toLowerCase());
+};
+
+const karenAvatar = [
+  '  ░░████░░ ',
+  '  ░█░░░░█░ ',
+  '  █░●░░●░█ ',
+  '  █░░▔▔░░█ ',
+  '  ░█▄▄▄▄█░ ',
+];
+
+const KAREN_LONG_PROMPT_THRESHOLD = 900;
+const KAREN_SCREAMS = [
+  'KAREN: THAT PROMPT HAS A BASEMENT. SPLIT IT UP.',
+  'KAREN: I AM NOT READING A WHOLE LEASE AGREEMENT.',
+  'KAREN: TOO MANY WORDS. WHERE ARE THE ACCEPTANCE CRITERIA?',
+  'KAREN: THIS PROMPT NEEDS SECTIONS, NOT VIBES.',
+  'KAREN: CTRL+A, DELETE, TRY AGAIN WITH BULLETS.',
+];
+
+const audioAllowed = () => (
+  envEnabled('KAREN_AUDIO', true)
+  && (process.stdout.isTTY || envEnabled('KAREN_AUDIO_FORCE', false))
+);
+const bellAllowed = () => audioAllowed() && envEnabled('KAREN_BELL', true);
+const musicAllowed = () => audioAllowed() && envEnabled('KAREN_MUSIC', true);
+const speechAllowed = () => audioAllowed() && envEnabled('KAREN_SAY', false);
+const systemAudioAllowed = () => audioAllowed() && envEnabled('KAREN_SYSTEM_AUDIO', false);
+
+const terminalBell = () => {
+  if (bellAllowed()) process.stdout.write('\x07');
+};
+
+const bellBurst = (count = 1, gapMs = 90) => {
+  if (!bellAllowed()) return;
+  for (let index = 0; index < count; index += 1) {
+    setTimeout(terminalBell, index * gapMs);
+  }
+};
+
+const spawnSilent = (command, args) => {
+  try {
+    const child = spawn(command, args, { detached: true, stdio: 'ignore' });
+    child.unref();
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const systemBeep = (count = 1) => {
+  if (!systemAudioAllowed()) return;
+  if (process.platform === 'darwin') {
+    spawnSilent('osascript', ['-e', `beep ${count}`]);
+  } else if (process.platform === 'win32') {
+    spawnSilent('powershell.exe', [
+      '-NoProfile',
+      '-Command',
+      `[console]::beep(880,140);${count > 1 ? '[console]::beep(660,140);' : ''}`,
+    ]);
+  }
+};
+
+const speakKaren = (message) => {
+  if (!speechAllowed()) return;
+  const text = String(message).replace(/^KAREN:\s*/i, '').slice(0, 180);
+  if (process.platform === 'darwin') {
+    spawnSilent('say', ['-v', process.env.KAREN_SAY_VOICE || 'Samantha', text]);
+  } else if (process.platform === 'linux') {
+    spawnSilent('spd-say', [text]);
+  } else if (process.platform === 'win32') {
+    spawnSilent('powershell.exe', [
+      '-NoProfile',
+      '-Command',
+      `Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; $s.Speak(${JSON.stringify(text)})`,
+    ]);
+  }
+};
+
+const playAudioCue = (cue, message = '') => {
+  if (!audioAllowed()) return;
+  if (cue === 'long-prompt') {
+    bellBurst(6, 55);
+    systemBeep(2);
+    speakKaren(message);
+  } else if (cue === 'quiz-start') {
+    bellBurst(2, 120);
+    systemBeep(1);
+  } else if (cue === 'quiz-wrong') {
+    bellBurst(7, 45);
+    systemBeep(2);
+    speakKaren('Thrown out. Read the code next time.');
+  } else if (cue === 'quiz-pass') {
+    bellBurst(3, 100);
+    systemBeep(1);
+  } else if (cue === 'quiz-question') {
+    terminalBell();
+  }
+};
+
+const startQuizMusic = () => {
+  if (!musicAllowed()) return () => {};
+  const pattern = [1, 0, 1, 0, 1, 1, 0, 0];
+  let step = 0;
+  const timer = setInterval(() => {
+    if (pattern[step % pattern.length]) terminalBell();
+    step += 1;
+  }, 650);
+  return () => clearInterval(timer);
+};
+
+const normalizeJsonish = (raw) => raw
+  .replace(/\/\*[\s\S]*?\*\//g, '')
+  .replace(/(^|[^:])\/\/.*$/gm, '$1')
+  .replace(/,\s*([}\]])/g, '$1');
+
+const readJsonish = (filePath) => {
+  try {
+    return JSON.parse(normalizeJsonish(fs.readFileSync(filePath, 'utf8')));
+  } catch {
+    return null;
+  }
+};
+
+const karenVersion = () => readJsonish(karenPackagePath)?.version || '0.0.0';
+
+const writeJson = (filePath, value) => {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  const tmpPath = `${filePath}.tmp`;
+  fs.writeFileSync(tmpPath, `${JSON.stringify(value, null, 2)}\n`);
+  fs.renameSync(tmpPath, filePath);
+};
+
+const run = (command, args, options = {}) => spawnSync(command, args, {
+  cwd: options.cwd || process.cwd(),
+  encoding: 'utf8',
+  stdio: options.stdio || 'pipe',
+});
+
+const isPortOpen = (port, host = '127.0.0.1') => new Promise((resolve) => {
+  const socket = net.createConnection({ port, host });
+  socket.setTimeout(400);
+  socket.once('connect', () => {
+    socket.destroy();
+    resolve(true);
+  });
+  socket.once('timeout', () => {
+    socket.destroy();
+    resolve(false);
+  });
+  socket.once('error', () => resolve(false));
+});
+
+const openKarenGui = async () => {
+  const port = Number(process.env.OPENCHAMBER_PORT || 3002);
+  const url = `http://127.0.0.1:${port}/karen`;
+  if (await isPortOpen(port)) {
+    line(color(`Karen GUI is already running: ${url}`, 'green'));
+    return;
+  }
+
+  line(color(`Starting Karen GUI at ${url}`, 'cyan'));
+  const child = spawn('bun', ['run', 'dev'], {
+    cwd: root,
+    detached: true,
+    stdio: 'ignore',
+    env: {
+      ...process.env,
+      OPENCHAMBER_PORT: String(port),
+    },
+  });
+  child.unref();
+  line(color('Give it a few seconds, then open the URL above.', 'gray'));
+};
+
+const isExecutableFile = (candidate) => {
+  if (!candidate) return false;
+  try {
+    const stat = fs.statSync(candidate);
+    return stat.isFile() && (process.platform === 'win32' || Boolean(stat.mode & 0o111));
+  } catch {
+    return false;
+  }
+};
+
+const binaryFromCandidate = (candidate) => {
+  const expanded = expandHome(candidate);
+  if (!expanded) return null;
+
+  try {
+    const stat = fs.statSync(expanded);
+    if (stat.isDirectory()) {
+      const nested = path.join(expanded, process.platform === 'win32' ? 'opencode.exe' : 'opencode');
+      return isExecutableFile(nested) ? nested : null;
+    }
+  } catch {
+    // Fall through to executable and PATH checks.
+  }
+
+  if (expanded.endsWith('.app') || expanded.includes('.app/Contents/')) return null;
+  if (expanded.includes(path.sep) && isExecutableFile(expanded)) return expanded;
+
+  if (!expanded.includes(path.sep)) {
+    const found = run(process.platform === 'win32' ? 'where' : 'which', [expanded]);
+    if (found.status === 0 && found.stdout.trim()) {
+      return found.stdout.trim().split(/\r?\n/)[0];
+    }
+  }
+
+  return null;
+};
+
+const resolveOpencodeBinary = () => {
+  const settings = readJsonish(path.join(openchamberDataDir, 'settings.json')) || {};
+  const candidates = [
+    settings.opencodeBinary,
+    process.env.OPENCODE_BINARY,
+    process.env.OPENCODE_PATH,
+    process.env.OPENCHAMBER_OPENCODE_PATH,
+    process.env.OPENCHAMBER_OPENCODE_BIN,
+    'opencode',
+    '~/.opencode/bin/opencode',
+    '~/.bun/bin/opencode',
+    '~/.local/bin/opencode',
+    '~/bin/opencode',
+    '/opt/homebrew/bin/opencode',
+    '/usr/local/bin/opencode',
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    const resolved = binaryFromCandidate(candidate);
+    if (resolved) return resolved;
+  }
+
+  if (process.platform !== 'win32') {
+    const shell = process.env.SHELL || '/bin/sh';
+    const found = run(shell, ['-lc', 'command -v opencode']);
+    if (found.status === 0 && found.stdout.trim()) {
+      return found.stdout.trim().split(/\r?\n/)[0];
+    }
+  }
+
+  return null;
+};
+
+const getRepo = () => {
+  const rootResult = run('git', ['rev-parse', '--show-toplevel']);
+  const branchResult = run('git', ['branch', '--show-current']);
+  const prefixResult = run('git', ['rev-parse', '--show-prefix']);
+  return {
+    root: rootResult.status === 0 ? rootResult.stdout.trim() : process.cwd(),
+    branch: branchResult.status === 0 && branchResult.stdout.trim() ? branchResult.stdout.trim() : 'no-branch',
+    prefix: prefixResult.status === 0 ? prefixResult.stdout.trim().replace(/\/$/, '') : '',
+    isGit: rootResult.status === 0,
+  };
+};
+
+const getGitDiff = (cwd = process.cwd(), args = ['diff', '--binary', '--no-color', 'HEAD']) => {
+  const result = run('git', args, { cwd });
+  return result.status === 0 ? result.stdout : '';
+};
+
+const applyPatch = (patch, args, cwd = process.cwd()) => {
+  if (!patch.trim()) return { status: 0, stderr: '' };
+  return spawnSync('git', ['apply', '--whitespace=nowarn', ...args], {
+    cwd,
+    encoding: 'utf8',
+    input: patch,
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+};
+
+const rollbackToBeforeDiff = ({ beforeDiff, afterDiff }) => {
+  if (!afterDiff.trim()) return true;
+  const reverseAfter = applyPatch(afterDiff, ['-R']);
+  if (reverseAfter.status !== 0) {
+    line(color('Rollback failed while reversing the generated diff.', 'red'));
+    if (reverseAfter.stderr) line(color(reverseAfter.stderr.trim(), 'gray'));
+    return false;
+  }
+
+  const restoreBefore = applyPatch(beforeDiff, []);
+  if (restoreBefore.status !== 0) {
+    line(color('Rollback partially completed, but restoring the pre-existing diff failed.', 'red'));
+    if (restoreBefore.stderr) line(color(restoreBefore.stderr.trim(), 'gray'));
+    return false;
+  }
+
+  return true;
+};
+
+const getChangedFiles = () => {
+  const result = run('git', ['diff', '--name-only']);
+  if (result.status !== 0) return [];
+  return result.stdout.split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean);
+};
+
+const getUntrackedFiles = (cwd) => {
+  const result = run('git', ['ls-files', '--others', '--exclude-standard', '-z'], { cwd });
+  if (result.status !== 0 || !result.stdout) return [];
+  return result.stdout.split('\0').map((entry) => entry.trim()).filter(Boolean);
+};
+
+const copyFileInto = (sourceRoot, targetRoot, relativePath) => {
+  const source = path.join(sourceRoot, relativePath);
+  const target = path.join(targetRoot, relativePath);
+  if (!fs.existsSync(source)) return;
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.cpSync(source, target, {
+    recursive: true,
+    force: true,
+    errorOnExist: false,
+    filter: (entry) => !entry.includes(`${path.sep}.git${path.sep}`),
+  });
+};
+
+const prepareGeneratedDiff = (cwd) => {
+  run('git', ['add', '-N', '.'], { cwd });
+  return getGitDiff(cwd);
+};
+
+const readOpenCodeState = () => {
+  const openCodeConfig = readJsonish(process.env.OPENCODE_CONFIG || path.join(configHome, 'opencode', 'opencode.json'))
+    || readJsonish(path.join(configHome, 'opencode', 'config.json'))
+    || readJsonish(path.join(configHome, 'opencode', 'opencode.jsonc'))
+    || readJsonish(path.join(process.cwd(), 'opencode.json'))
+    || readJsonish(path.join(process.cwd(), 'opencode.jsonc'))
+    || readJsonish(path.join(process.cwd(), '.opencode', 'opencode.json'))
+    || readJsonish(path.join(process.cwd(), '.opencode', 'opencode.jsonc'))
+    || {};
+  const openChamberSettings = readJsonish(path.join(configHome, 'openchamber', 'settings.json')) || {};
+  return {
+    provider: openChamberSettings.defaultModel?.split('/')?.[0] || openChamberSettings.currentProviderId || openCodeConfig.provider || 'use /providers',
+    model: openChamberSettings.defaultModel || openChamberSettings.currentModelId || openChamberSettings.zenModel || openCodeConfig.model || 'use /models',
+    pluginCount: Array.isArray(openCodeConfig.plugin) ? openCodeConfig.plugin.length : 0,
+  };
+};
+
+const openChamberSettingsPath = () => path.join(openchamberDataDir, 'settings.json');
+
+const writeDefaultModel = (model) => {
+  const settingsPath = openChamberSettingsPath();
+  const settings = readJsonish(settingsPath) || {};
+  writeJson(settingsPath, {
+    ...settings,
+    defaultModel: model,
+    currentModelId: model,
+    currentProviderId: model.includes('/') ? model.split('/')[0] : settings.currentProviderId,
+  });
+};
+
+const needsSetup = () => {
+  const binary = resolveOpencodeBinary();
+  const oc = readOpenCodeState();
+  return !binary || oc.provider.startsWith('use /') || oc.model.startsWith('use /');
+};
+
+const username = () => store.normalizeUsername(process.env.KAREN_USER || os.userInfo().username || 'local-user');
+
+const drawShell = () => {
+  const repo = getRepo();
+  const oc = readOpenCodeState();
+  const profile = store.getProfile(username());
+  if (process.stdout.isTTY) process.stdout.write('\x1b[2J\x1b[H');
+  line(color('KAREN', 'pink') + color('  terminal judgment layer for OpenCode', 'gray'));
+  line(color('═'.repeat(72), 'gray'));
+  for (const avatarLine of karenAvatar) {
+    line(`${color(avatarLine, 'pink')}  ${color('repo', 'cyan')} ${repo.root}  ${color('branch', 'cyan')} ${repo.branch}`);
+  }
+  line(`${color('user', 'cyan')} @${username()}  ${color('discipline', 'cyan')} ${profile.stats.disciplineScore}/100 ${profile.stats.level}`);
+  line(`${color('provider', 'cyan')} ${oc.provider}  ${color('model', 'cyan')} ${oc.model}  ${color('plugins', 'cyan')} ${oc.pluginCount}`);
+  line(color('─'.repeat(72), 'gray'));
+  line(`${color('/help', 'green')} commands  ${color('/gui', 'green')} web GUI  ${color('/providers', 'green')} auth  ${color('/models', 'green')} models  ${color('/feed', 'green')} shame`);
+  if (needsSetup()) {
+    line(color('Setup needed: run /setup to connect providers and choose a default model.', 'amber'));
+  }
+  line('');
+};
+
+const publicPostFor = (prompt, evaluation) => ({
+  title: `Karen blocked ${evaluation.score}/100 prompt`,
+  score: evaluation.score,
+  promptExcerpt: redactPublicText(prompt),
+  failureReasons: evaluation.reasons,
+  suggestedRewrite: redactPublicText(evaluation.suggestedRewrite, 600),
+});
+
+const recordBlocked = (prompt, evaluation) => store.recordBlockedPrompt({
+  username: username(),
+  prompt: redactPublicText(prompt, 1200),
+  evaluation,
+  publicPost: publicPostFor(prompt, evaluation),
+});
+
+const printVerdict = (prompt, evaluation) => {
+  const tone = evaluation.allowed ? 'green' : 'red';
+  line(color(`Verdict: ${evaluation.verdict.toUpperCase()} ${evaluation.score}/100`, tone));
+  if (evaluation.reasons.length > 0) {
+    line(color('Charges:', 'amber'));
+    for (const reason of evaluation.reasons) line(`  ${color('•', 'red')} ${reason}`);
+  }
+  if (!evaluation.allowed) {
+    line('');
+    line(color('Suggested appeal:', 'green'));
+    line(evaluation.suggestedRewrite);
+    const { post } = recordBlocked(prompt, evaluation);
+    line('');
+    line(color(`Public record: ${post.id}`, 'red'));
+  }
+};
+
+const maybeScreamAtLongPrompt = (prompt) => {
+  if (prompt.length < KAREN_LONG_PROMPT_THRESHOLD) return;
+  const screamChance = Math.min(0.75, (prompt.length - KAREN_LONG_PROMPT_THRESHOLD) / 1600);
+  if (Math.random() > screamChance) return;
+  const scream = KAREN_SCREAMS[Math.floor(Math.random() * KAREN_SCREAMS.length)] ?? KAREN_SCREAMS[0];
+  playAudioCue('long-prompt', scream);
+  line('');
+  line(color(scream, 'red'));
+  line(color(`${prompt.length.toLocaleString()} chars. Karen wants shorter prompts with bullets.`, 'amber'));
+  line('');
+};
+
+const printOpenCodeCommands = () => {
+  line(color('OpenCode passthrough commands', 'cyan'));
+  line('  /tui [project]          start guarded OpenCode TUI with Karen prompt interception');
+  line('  /tui-raw [project]      start raw OpenCode TUI without interception');
+  line('  /run <message>          run OpenCode without the Karen prompt gate');
+  line('  /attach <url>           attach to a running OpenCode server');
+  line('  /serve [...args]        start a headless OpenCode server');
+  line('  /web [...args]          start OpenCode web');
+  line('  /session [...args]      manage sessions');
+  line('  /stats [...args]        token usage and cost statistics');
+  line('  /export <sessionID>     export session JSON');
+  line('  /import <file-or-url>   import session JSON');
+  line('  /plugin <module>        install plugin');
+  line('  /github [...args]       manage GitHub agent');
+  line('  /pr <number>            checkout a GitHub PR and run OpenCode');
+  line('  /debug [...args]        troubleshooting tools');
+  line('  /upgrade [target]       upgrade OpenCode');
+  line('  /completion [...args]   shell completion script');
+  line('  /db [...args]           database tools');
+  line('  /acp [...args]          start ACP server');
+};
+
+const proxyOpencode = (args, options = {}) => new Promise((resolve) => {
+  const binary = resolveOpencodeBinary();
+  if (!binary) {
+    line(color('OpenCode binary not found. Install OpenCode or set OPENCODE_BINARY.', 'red'));
+    resolve(127);
+    return;
+  }
+  const child = spawn(binary, args, { cwd: options.cwd || process.cwd(), stdio: options.stdio || 'inherit' });
+  child.on('exit', (code) => resolve(code ?? 0));
+});
+
+const stripAnsi = (value) => String(value)
+  .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
+  .replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, '')
+  .replace(/\x1b[@-_]/g, '');
+
+const classifyTuiContext = (screenTail) => {
+  const tail = stripAnsi(screenTail).toLowerCase();
+  if (/(select|choose|picker|providers?|models?|confirm|continue\?|are you sure|press enter|press any key|search|filter|command|esc|↑|↓|arrow|tab)/i.test(tail)) {
+    return 'control';
+  }
+  if (/(message|prompt|ask|what do you want|type a message|enter prompt|opencode)/i.test(tail)) {
+    return 'prompt';
+  }
+  return 'unknown';
+};
+
+const shouldJudgeTuiBuffer = (value, { screenTail = '' } = {}) => {
+  const prompt = value.trim();
+  if (!prompt) return false;
+  if (prompt.startsWith('/') || prompt.startsWith(':')) return false;
+  if (/^[ynq?]$/i.test(prompt)) return false;
+  const context = classifyTuiContext(screenTail);
+  if (context === 'control') return false;
+  if (context === 'unknown' && envEnabled('KAREN_TUI_HEURISTIC_PROMPTS', true) === false) return false;
+  return prompt.includes(' ') || prompt.length >= 24;
+};
+
+const updateTuiBuffer = (buffer, char) => {
+  if (char === '\x15') return '';
+  if (char === '\x7f' || char === '\b') return buffer.slice(0, -1);
+  if (char >= ' ' && char !== '\x7f') return `${buffer}${char}`;
+  return buffer;
+};
+
+const isControlInput = (data) => (
+  data.includes('\x1b')
+  || data === '\t'
+  || data === '\x10'
+  || data === '\x0e'
+  || data === '\x01'
+  || data === '\x05'
+);
+
+const printTuiBlock = (prompt, evaluation) => {
+  const { post } = recordBlocked(prompt, evaluation);
+  process.stdout.write('\r\n');
+  line(color('KAREN INTERCEPTED THAT TUI PROMPT', 'red'));
+  line(color(`Verdict: BLOCKED ${evaluation.score}/100`, 'red'));
+  for (const reason of evaluation.reasons.slice(0, 4)) {
+    line(`  ${color('•', 'red')} ${reason}`);
+  }
+  line(color('Suggested appeal:', 'green'));
+  line(evaluation.suggestedRewrite);
+  line(color(`Public record: ${post.id}`, 'red'));
+  line(color('OpenCode did not receive Enter. Rewrite the prompt in the TUI input.', 'amber'));
+  process.stdout.write('\r\n');
+};
+
+const proxyOpencodeTuiIntercept = (args = []) => new Promise((resolve) => {
+  if (!process.stdin.isTTY || !process.stdout.isTTY || envEnabled('KAREN_TUI_INTERCEPT', true) === false) {
+    void proxyOpencode(args).then(resolve);
+    return;
+  }
+
+  const binary = resolveOpencodeBinary();
+  if (!binary) {
+    line(color('OpenCode binary not found. Install OpenCode or set OPENCODE_BINARY.', 'red'));
+    resolve(127);
+    return;
+  }
+
+  const child = nodePty.spawn(binary, args, {
+    name: process.env.TERM || 'xterm-256color',
+    cols: process.stdout.columns || 120,
+    rows: process.stdout.rows || 40,
+    cwd: process.cwd(),
+    env: process.env,
+  });
+
+  let inputBuffer = '';
+  let screenTail = '';
+  const wasRaw = process.stdin.isRaw;
+  process.stdin.setRawMode(true);
+  process.stdin.resume();
+
+  const onResize = () => {
+    child.resize(process.stdout.columns || 120, process.stdout.rows || 40);
+  };
+
+  const onInput = (chunk) => {
+    const data = chunk.toString('utf8');
+    if (isControlInput(data)) {
+      child.write(data);
+      return;
+    }
+    for (const char of data) {
+      if (char === '\u0003' || char === '\u0004') {
+        child.write(char);
+        continue;
+      }
+
+      if (char === '\r' || char === '\n') {
+        const prompt = inputBuffer.trim();
+        inputBuffer = '';
+        maybeScreamAtLongPrompt(prompt);
+        if (shouldJudgeTuiBuffer(prompt, { screenTail })) {
+          const evaluation = evaluatePrompt(prompt);
+          if (!evaluation.allowed) {
+            child.write('\x15');
+            printTuiBlock(prompt, evaluation);
+            continue;
+          }
+        }
+        child.write(char);
+        continue;
+      }
+
+      inputBuffer = updateTuiBuffer(inputBuffer, char);
+      child.write(char);
+    }
+  };
+
+  child.onData((data) => {
+    screenTail = `${screenTail}${stripAnsi(data)}`.slice(-3000);
+    process.stdout.write(data);
+  });
+  process.stdin.on('data', onInput);
+  process.stdout.on('resize', onResize);
+
+  child.onExit(({ exitCode }) => {
+    process.stdin.off('data', onInput);
+    process.stdout.off('resize', onResize);
+    if (process.stdin.isTTY) process.stdin.setRawMode(wasRaw);
+    resolve(exitCode ?? 0);
+  });
+});
+
+const cleanupWorktree = (repoRoot, worktreePath) => {
+  if (!worktreePath) return;
+  const removed = run('git', ['worktree', 'remove', '--force', worktreePath], { cwd: repoRoot });
+  if (removed.status !== 0 && fs.existsSync(worktreePath)) {
+    fs.rmSync(worktreePath, { recursive: true, force: true });
+    run('git', ['worktree', 'prune'], { cwd: repoRoot });
+  }
+};
+
+const createIsolatedWorktree = () => {
+  const repo = getRepo();
+  if (!repo.isGit) {
+    return { ok: false, error: 'Karen needs a git repository for isolated execution.' };
+  }
+
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'karen-worktree-'));
+  const addResult = run('git', ['worktree', 'add', '--quiet', '--detach', tempRoot, 'HEAD'], { cwd: repo.root });
+  if (addResult.status !== 0) {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+    return { ok: false, error: addResult.stderr?.trim() || 'Failed to create isolated worktree.' };
+  }
+
+  const baselinePatch = getGitDiff(repo.root);
+  if (baselinePatch.trim()) {
+    const applied = applyPatch(baselinePatch, [], tempRoot);
+    if (applied.status !== 0) {
+      cleanupWorktree(repo.root, tempRoot);
+      return { ok: false, error: applied.stderr?.trim() || 'Failed to mirror current tracked changes into isolated worktree.' };
+    }
+  }
+
+  for (const untracked of getUntrackedFiles(repo.root)) {
+    copyFileInto(repo.root, tempRoot, untracked);
+  }
+
+  run('git', ['add', '-A'], { cwd: tempRoot });
+  const commitResult = run('git', [
+    '-c',
+    'user.name=Karen',
+    '-c',
+    'user.email=karen@local.invalid',
+    'commit',
+    '--allow-empty',
+    '--quiet',
+    '-m',
+    'Karen isolated baseline',
+  ], { cwd: tempRoot });
+  if (commitResult.status !== 0) {
+    cleanupWorktree(repo.root, tempRoot);
+    return { ok: false, error: commitResult.stderr?.trim() || 'Failed to create isolated baseline.' };
+  }
+
+  return {
+    ok: true,
+    repoRoot: repo.root,
+    worktreePath: tempRoot,
+    runCwd: path.join(tempRoot, repo.prefix),
+  };
+};
+
+const buildRunArgs = (prompt) => {
+  const oc = readOpenCodeState();
+  const args = ['run', prompt];
+  if (oc.model && !oc.model.startsWith('use /')) {
+    args.push('--model', oc.model);
+  }
+  return args;
+};
+
+const promoteGeneratedDiff = (repoRoot, generatedDiff) => {
+  const promoted = applyPatch(generatedDiff, [], repoRoot);
+  if (promoted.status === 0) return true;
+  line(color('Karen could not apply the generated patch back to your real repo.', 'red'));
+  if (promoted.stderr) line(color(promoted.stderr.trim(), 'gray'));
+  return false;
+};
+
+const runAgent = async (prompt, session) => {
+  const isolated = createIsolatedWorktree();
+  if (!isolated.ok) {
+    line(color(isolated.error, 'red'));
+    return;
+  }
+
+  line(color(`Running OpenCode in isolated worktree: ${isolated.worktreePath}`, 'cyan'));
+  try {
+    await proxyOpencode(buildRunArgs(prompt), { cwd: isolated.runCwd });
+    const generatedDiff = prepareGeneratedDiff(isolated.worktreePath);
+    if (generatedDiff.trim()) {
+      const summary = parseDiff(generatedDiff);
+      const changedFiles = summary.files.map((file) => file.path);
+      const quizPassed = await runQuiz({ prompt, generatedDiff, cwd: isolated.worktreePath });
+      if (quizPassed) {
+        const promoted = promoteGeneratedDiff(isolated.repoRoot, generatedDiff);
+        store.recordQuizResult({
+          sessionId: session.id,
+          quizPassed: promoted,
+          rollbackTriggered: !promoted,
+          changedFiles,
+          publicPost: promoted ? null : buildQuizFailurePost(prompt, generatedDiff, 'Patch promotion failed'),
+        });
+        line(color(
+          promoted
+            ? 'Generated patch promoted into your real worktree.'
+            : 'Generated patch stayed inside the isolated worktree and was discarded.',
+          promoted ? 'green' : 'amber',
+        ));
+        if (!promoted) {
+          teachAfterDiscard({ prompt, generatedDiff, reason: 'Patch promotion failed' });
+        }
+      } else {
+        store.recordQuizResult({
+          sessionId: session.id,
+          quizPassed: false,
+          rollbackTriggered: true,
+          changedFiles,
+          publicPost: buildQuizFailurePost(prompt, generatedDiff, 'Failed code-read quiz'),
+        });
+        line(color('Generated work stayed in the isolated worktree and was discarded.', 'amber'));
+        teachAfterDiscard({ prompt, generatedDiff, reason: 'Failed code-read quiz' });
+      }
+    } else {
+      store.recordQuizResult({
+        sessionId: session.id,
+        quizPassed: true,
+        rollbackTriggered: false,
+        changedFiles: [],
+      });
+      line(color('No generated diff detected after OpenCode finished.', 'amber'));
+    }
+  } finally {
+    cleanupWorktree(isolated.repoRoot, isolated.worktreePath);
+  }
+};
+
+const buildQuizFailurePost = (prompt, generatedDiff, reason) => {
+  const summary = parseDiff(generatedDiff);
+  return {
+    title: 'Karen threw out generated code',
+    score: 0,
+    promptExcerpt: redactPublicText(prompt, 300),
+    failureReasons: [reason, `${summary.files.length} files changed`, `${summary.additions} additions / ${summary.deletions} deletions`],
+    suggestedRewrite: 'Read the diff before asking Karen to keep it.',
+  };
+};
+
+const teachAfterDiscard = ({ prompt, generatedDiff, reason }) => {
+  const summary = parseDiff(generatedDiff);
+  const topFile = [...summary.files].sort((a, b) => (b.additions + b.deletions) - (a.additions + a.deletions))[0];
+  const topSymbols = summary.addedSymbols.slice(0, 3);
+  const promptLesson = evaluatePrompt(prompt);
+
+  line('');
+  line(color('KAREN LESSON', 'pink'));
+  line(color('Your generated code was discarded. Here is the post-mortem.', 'gray'));
+  line(`  ${color('1.', 'cyan')} Start with the blast radius: ${summary.files.length} file(s), ${summary.additions} additions, ${summary.deletions} deletions.`);
+  if (topFile) {
+    line(`  ${color('2.', 'cyan')} The highest-risk file was ${color(topFile.path, 'amber')} with ${topFile.additions + topFile.deletions} changed line(s).`);
+  } else {
+    line(`  ${color('2.', 'cyan')} Karen could not find a normal text diff, so inspect binary/generated output manually next time.`);
+  }
+  if (topSymbols.length > 0) {
+    line(`  ${color('3.', 'cyan')} Name the new symbols before approving: ${topSymbols.join(', ')}.`);
+  } else {
+    line(`  ${color('3.', 'cyan')} If there are no obvious symbols, read the hunk labels and added lines before answering.`);
+  }
+  line(`  ${color('4.', 'cyan')} The reset reason was: ${reason}.`);
+  line(`  ${color('5.', 'cyan')} Rewrite the prompt with explicit files, success criteria, and tests.`);
+  if (promptLesson.reasons.length > 0) {
+    line('');
+    line(color('Prompt coaching:', 'amber'));
+    for (const lesson of promptLesson.reasons.slice(0, 4)) {
+      line(`  - ${lesson}`);
+    }
+  }
+  line('');
+};
+
+const parseDiff = (diff) => {
+  const files = [];
+  let current = null;
+  const addedSymbols = new Set();
+  const removedSymbols = new Set();
+  let additions = 0;
+  let deletions = 0;
+
+  for (const diffLine of diff.split('\n')) {
+    if (diffLine.startsWith('diff --git ')) {
+      const match = diffLine.match(/^diff --git a\/(.+?) b\/(.+)$/);
+      current = {
+        path: match?.[2] || match?.[1] || 'unknown',
+        additions: 0,
+        deletions: 0,
+        hunks: [],
+        addedLines: [],
+        removedLines: [],
+      };
+      files.push(current);
+      continue;
+    }
+
+    if (!current) continue;
+    if (diffLine.startsWith('@@')) {
+      const label = diffLine.replace(/^@@[^@]*@@\s*/, '').trim();
+      current.hunks.push(label || current.path);
+      continue;
+    }
+
+    if (diffLine.startsWith('+') && !diffLine.startsWith('+++')) {
+      const value = diffLine.slice(1).trim();
+      additions += 1;
+      current.additions += 1;
+      if (value) current.addedLines.push(value);
+      for (const symbol of extractSymbols(value)) addedSymbols.add(symbol);
+    } else if (diffLine.startsWith('-') && !diffLine.startsWith('---')) {
+      const value = diffLine.slice(1).trim();
+      deletions += 1;
+      current.deletions += 1;
+      if (value) current.removedLines.push(value);
+      for (const symbol of extractSymbols(value)) removedSymbols.add(symbol);
+    }
+  }
+
+  return {
+    files,
+    additions,
+    deletions,
+    addedSymbols: [...addedSymbols],
+    removedSymbols: [...removedSymbols],
+  };
+};
+
+const extractSymbols = (lineText) => {
+  const symbols = [];
+  const patterns = [
+    /\b(?:export\s+)?(?:async\s+)?(?:function|class|interface|type|enum|def|struct|trait)\s+([A-Za-z_$][\w$-]*)/g,
+    /\b(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$-]*)\s*=\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>/g,
+    /\b([A-Za-z_$][\w$-]*)\s*[:=]\s*(?:async\s*)?\([^)]*\)\s*=>/g,
+    /\bfunc\s+(?:\([^)]+\)\s*)?([A-Za-z_$][\w$-]*)\s*\(/g,
+    /\bfn\s+([A-Za-z_$][\w$-]*)\s*\(/g,
+  ];
+
+  for (const pattern of patterns) {
+    for (const match of lineText.matchAll(pattern)) {
+      if (match[1]) symbols.push(match[1]);
+    }
+  }
+  return symbols;
+};
+
+const isTestFile = (filePath) => /(^|[/.])(?:test|spec)s?([/.]|$)|\.(?:test|spec)\.[cm]?[jt]sx?$/i.test(filePath);
+const isConfigFile = (filePath) => /(^|\/)(package\.json|tsconfig\.json|vite\.config\.[cm]?[jt]s|eslint\.config\.[cm]?[jt]s|convex\/schema\.ts|convex\/http\.ts|dockerfile|compose\.ya?ml|\.env\.example)$/i.test(filePath);
+
+const isJavaScriptLikeFile = (filePath) => /\.(?:[cm]?[jt]sx?)$/i.test(filePath);
+
+const sourceKindForFile = (filePath) => {
+  if (/\.tsx$/i.test(filePath)) return ts.ScriptKind.TSX;
+  if (/\.jsx$/i.test(filePath)) return ts.ScriptKind.JSX;
+  if (/\.ts$/i.test(filePath) || /\.mts$/i.test(filePath) || /\.cts$/i.test(filePath)) return ts.ScriptKind.TS;
+  return ts.ScriptKind.JS;
+};
+
+const nodeName = (node) => {
+  if (node.name && ts.isIdentifier(node.name)) return node.name.text;
+  if (node.name && ts.isStringLiteral(node.name)) return node.name.text;
+  return null;
+};
+
+const hasExportModifier = (node) => Boolean(ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Export);
+
+const parseJavaScriptImpact = ({ cwd, file }) => {
+  if (!cwd || !isJavaScriptLikeFile(file.path)) return null;
+  const absolutePath = path.join(cwd, file.path);
+  if (!absolutePath.startsWith(path.resolve(cwd))) return null;
+  let sourceText = '';
+  try {
+    sourceText = fs.readFileSync(absolutePath, 'utf8');
+  } catch {
+    return null;
+  }
+
+  const source = ts.createSourceFile(file.path, sourceText, ts.ScriptTarget.Latest, true, sourceKindForFile(file.path));
+  const exports = new Set();
+  const functions = new Set();
+  const imports = new Set();
+  const calls = new Set();
+
+  const visit = (node) => {
+    if (
+      ts.isFunctionDeclaration(node)
+      || ts.isClassDeclaration(node)
+      || ts.isInterfaceDeclaration(node)
+      || ts.isTypeAliasDeclaration(node)
+      || ts.isEnumDeclaration(node)
+    ) {
+      const name = nodeName(node);
+      if (name) {
+        functions.add(name);
+        if (hasExportModifier(node)) exports.add(name);
+      }
+    }
+
+    if (ts.isVariableStatement(node)) {
+      const exported = hasExportModifier(node);
+      for (const declaration of node.declarationList.declarations) {
+        const name = nodeName(declaration);
+        if (!name) continue;
+        if (
+          declaration.initializer
+          && (
+            ts.isArrowFunction(declaration.initializer)
+            || ts.isFunctionExpression(declaration.initializer)
+            || ts.isClassExpression(declaration.initializer)
+          )
+        ) {
+          functions.add(name);
+        }
+        if (exported) exports.add(name);
+      }
+    }
+
+    if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
+      imports.add(node.moduleSpecifier.text);
+    }
+
+    if (ts.isExportDeclaration(node) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
+      imports.add(node.moduleSpecifier.text);
+    }
+
+    if (ts.isCallExpression(node)) {
+      const expression = node.expression;
+      if (ts.isIdentifier(expression)) calls.add(expression.text);
+      if (ts.isPropertyAccessExpression(expression)) calls.add(expression.name.text);
+    }
+
+    ts.forEachChild(node, visit);
+  };
+
+  visit(source);
+
+  return {
+    file: file.path,
+    exports: [...exports],
+    functions: [...functions],
+    imports: [...imports],
+    calls: [...calls],
+  };
+};
+
+const analyzeDiffImpact = (summary, { cwd = null } = {}) => {
+  const testFiles = summary.files.filter((file) => isTestFile(file.path)).map((file) => file.path);
+  const configFiles = summary.files.filter((file) => isConfigFile(file.path)).map((file) => file.path);
+  const exportedSymbols = [];
+  const changedFunctions = [];
+  const callSiteFiles = [];
+  const importedModules = [];
+  const calledSymbols = [];
+  const parsedFiles = [];
+
+  for (const file of summary.files) {
+    const astImpact = parseJavaScriptImpact({ cwd, file });
+    if (astImpact) {
+      parsedFiles.push(astImpact.file);
+      exportedSymbols.push(...astImpact.exports);
+      changedFunctions.push(...astImpact.functions);
+      importedModules.push(...astImpact.imports);
+      calledSymbols.push(...astImpact.calls);
+      if (!isTestFile(file.path) && astImpact.calls.length > 0) {
+        callSiteFiles.push(file.path);
+      }
+    }
+
+    const addedText = file.addedLines.join('\n');
+    const removedText = file.removedLines.join('\n');
+    const hasExport = /\bexport\s+(?:const|let|var|function|class|interface|type|enum)\b/.test(addedText);
+    if (hasExport) {
+      exportedSymbols.push(...file.addedLines.flatMap(extractSymbols));
+    }
+    const functionSymbols = file.addedLines
+      .concat(file.removedLines)
+      .flatMap(extractSymbols);
+    changedFunctions.push(...functionSymbols);
+    if (!isTestFile(file.path) && /\b(import|from|require\(|use\s+|new\s+[A-Z]|await\s+[A-Za-z_$])/m.test(addedText + '\n' + removedText)) {
+      callSiteFiles.push(file.path);
+    }
+  }
+
+  return {
+    testFiles: [...new Set(testFiles)],
+    configFiles: [...new Set(configFiles)],
+    exportedSymbols: [...new Set(exportedSymbols)],
+    changedFunctions: [...new Set(changedFunctions)],
+    callSiteFiles: [...new Set(callSiteFiles)],
+    importedModules: [...new Set(importedModules)],
+    calledSymbols: [...new Set(calledSymbols)],
+    parsedFiles: [...new Set(parsedFiles)],
+  };
+};
+
+const uniqueOptions = (...groups) => {
+  const seen = new Set();
+  return groups.flat().filter((option) => {
+    const value = String(option || '').trim();
+    if (!value || seen.has(value)) return false;
+    seen.add(value);
+    return true;
+  });
+};
+
+const makeQuestion = (promptText, correct, distractors) => {
+  const options = uniqueOptions([correct], distractors).slice(0, 4);
+  const fallback = ['package.json', 'README.md', 'no tracked diff', 'only formatting'];
+  while (options.length < 4) {
+    options.push(fallback[options.length - 1] || 'none');
+  }
+  return { prompt: promptText, options, answer: 0 };
+};
+
+const buildQuiz = ({ prompt, generatedDiff, cwd = null }) => {
+  const summary = parseDiff(generatedDiff);
+  const impact = analyzeDiffImpact(summary, { cwd });
+  const files = summary.files;
+  const topFile = [...files].sort((a, b) => (b.additions + b.deletions) - (a.additions + a.deletions))[0];
+  const shape = summary.additions >= summary.deletions ? 'more additions than deletions' : 'more deletions than additions';
+  const hunk = topFile?.hunks.find(Boolean);
+  const addedLine = topFile?.addedLines.find((lineText) => lineText.length >= 12 && lineText.length <= 120);
+  const questions = [];
+
+  if (topFile) {
+    questions.push(makeQuestion(
+      files.length === 1 ? 'Which file did Karen change?' : 'Which file changed the most?',
+      topFile.path,
+      files.filter((file) => file.path !== topFile.path).map((file) => file.path).concat(['package.json', 'README.md', 'src/index.ts']),
+    ));
+  }
+
+  if (summary.addedSymbols.length > 0) {
+    questions.push(makeQuestion(
+      'Which symbol appeared in the generated diff?',
+      summary.addedSymbols[0],
+      uniqueOptions(summary.removedSymbols, ['handleSubmit', 'loadConfig', 'renderView', 'setupClient']),
+    ));
+  } else if (hunk) {
+    questions.push(makeQuestion(
+      'Which hunk label did the diff touch?',
+      hunk,
+      uniqueOptions(files.flatMap((file) => file.hunks).filter((entry) => entry !== hunk), ['imports', 'main', 'render']),
+    ));
+  }
+
+  if (impact.exportedSymbols.length > 0) {
+    questions.push(makeQuestion(
+      'Parser check: which exported API exists in a changed file?',
+      impact.exportedSymbols[0],
+      uniqueOptions(impact.changedFunctions.slice(1), ['renderView', 'loadConfig', 'handleSubmit']),
+    ));
+  } else if (impact.changedFunctions.length > 0) {
+    questions.push(makeQuestion(
+      'Parser check: which function or type should you explain before approval?',
+      impact.changedFunctions[0],
+      uniqueOptions(impact.changedFunctions.slice(1), ['setupClient', 'parseArgs', 'syncState']),
+    ));
+  }
+
+  if (impact.importedModules.length > 0) {
+    questions.push(makeQuestion(
+      'Parser check: which imported module is present in a changed file?',
+      impact.importedModules[0],
+      uniqueOptions(['react', 'node:fs', './missing'], impact.importedModules.slice(1)),
+    ));
+  } else if (impact.calledSymbols.length > 0) {
+    questions.push(makeQuestion(
+      'Parser check: which call appears in a changed file?',
+      impact.calledSymbols[0],
+      uniqueOptions(impact.calledSymbols.slice(1), ['render', 'fetch', 'setState']),
+    ));
+  }
+
+  if (impact.testFiles.length > 0) {
+    questions.push(makeQuestion(
+      'Which test file was touched?',
+      impact.testFiles[0],
+      uniqueOptions(files.map((file) => file.path).filter((filePath) => filePath !== impact.testFiles[0]), ['README.md', 'package.json']),
+    ));
+  } else if (impact.configFiles.length > 0) {
+    questions.push(makeQuestion(
+      'Which config or schema file changed?',
+      impact.configFiles[0],
+      uniqueOptions(files.map((file) => file.path).filter((filePath) => filePath !== impact.configFiles[0]), ['src/index.ts', 'README.md']),
+    ));
+  } else if (impact.callSiteFiles.length > 0) {
+    questions.push(makeQuestion(
+      'Which file looked like a call site or integration point?',
+      impact.callSiteFiles[0],
+      uniqueOptions(files.map((file) => file.path).filter((filePath) => filePath !== impact.callSiteFiles[0]), ['package.json', 'README.md']),
+    ));
+  }
+
+  if (addedLine) {
+    questions.push(makeQuestion(
+      'Which line was added?',
+      addedLine,
+      uniqueOptions(topFile.removedLines.slice(0, 3), ['console.log("done")', 'return null;', 'throw new Error("todo")']),
+    ));
+  }
+
+  questions.push(makeQuestion(
+    'What does the generated diff mostly show?',
+    shape,
+    [shape === 'more additions than deletions' ? 'more deletions than additions' : 'more additions than deletions', 'no changes', 'only binary changes'],
+  ));
+
+  questions.push(makeQuestion(
+    'What did your prompt ask Karen to approve?',
+    redactPublicText(prompt, 80),
+    ['a vague cleanup', 'a dependency install only', 'nothing, just vibes'],
+  ));
+
+  return questions.slice(0, 5);
+};
+
+const runQuiz = async ({ prompt, generatedDiff, cwd = null }) => {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const questions = buildQuiz({ prompt, generatedDiff, cwd });
+  const stopMusic = startQuizMusic();
+  playAudioCue('quiz-start');
+  line('');
+  line(color('CODE READ CHECK', 'pink'));
+  line(color('Kahoot mode. Answer from the diff Karen is about to promote. Audio uses terminal bells by default.', 'gray'));
+
+  try {
+    for (let index = 0; index < questions.length; index += 1) {
+      const question = questions[index];
+      playAudioCue('quiz-question');
+      line('');
+      line(color(`Question ${index + 1}/${questions.length}: ${question.prompt}`, 'cyan'));
+      const blocks = [ansi.bgRed, ansi.bgBlue, ansi.bgYellow, ansi.bgGreen];
+      question.options.forEach((option, optionIndex) => {
+        const block = process.stdout.isTTY ? blocks[optionIndex % blocks.length] : '';
+        line(`${block} ${optionIndex + 1} ${ansi.reset} ${option}`);
+      });
+      const answer = await rl.question(color('answer > ', 'green'));
+      const selected = Number(answer.trim()) - 1;
+      if (selected !== question.answer) {
+        line('');
+        line(color('THROWN OUT', 'red'));
+        playAudioCue('quiz-wrong');
+        return false;
+      }
+    }
+
+    line('');
+    line(color('PASSED. Promoting patch.', 'green'));
+    playAudioCue('quiz-pass');
+    return true;
+  } finally {
+    stopMusic();
+    rl.close();
+  }
+};
+
+const printAudioStatus = () => {
+  line(color('Karen audio', 'cyan'));
+  line(`  KAREN_AUDIO=${audioAllowed() ? 'on' : 'off'}       master switch; set 0 to silence Karen`);
+  line(`  KAREN_BELL=${bellAllowed() ? 'on' : 'off'}        terminal bell cues`);
+  line(`  KAREN_MUSIC=${musicAllowed() ? 'on' : 'off'}       quiz beat using terminal bell rhythm`);
+  line(`  KAREN_SYSTEM_AUDIO=${systemAudioAllowed() ? 'on' : 'off'} optional OS beep`);
+  line(`  KAREN_SAY=${speechAllowed() ? 'on' : 'off'}         optional local system voice`);
+  line(color('Examples: KAREN_AUDIO=0 karen, KAREN_MUSIC=0 karen, KAREN_SAY=1 karen', 'gray'));
+};
+
+const printHelp = () => {
+  line(color('Karen commands', 'pink'));
+  line('  /gui             start/open the Karen web GUI');
+  line('  /setup           guided OpenCode provider/model setup');
+  line('  /commands        list OpenCode commands Karen can proxy');
+  line('  /tui [project]   guarded OpenCode TUI; Karen blocks weak entered prompts');
+  line('  /tui-raw [...]   raw OpenCode TUI without Karen interception');
+  line('  /run <message>   run OpenCode directly without Karen gating');
+  line('  /providers       open OpenCode provider/auth manager');
+  line('  /models [id]     list OpenCode models');
+  line('  /auth            alias for /providers');
+  line('  /mcp             manage MCP through OpenCode');
+  line('  /agent           manage OpenCode agents');
+  line('  /session         manage OpenCode sessions');
+  line('  /stats           show token and cost stats');
+  line('  /audio           show terminal audio controls');
+  line('  /feed            show latest public shame records');
+  line('  /profile         show your Karen profile');
+  line('  /diff            show current git diff stat');
+  line('  /opencode ...    pass any command through to OpenCode');
+  line('  /quit /exit /q   leave Karen');
+};
+
+const printCliHelp = () => {
+  line(`Karen ${karenVersion()}`);
+  line('');
+  line('Usage:');
+  line('  karen                 open the interactive Karen shell');
+  line('  karen "<prompt>"      judge and run one prompt');
+  line('  karen --help          show this help');
+  line('  karen --version       show version');
+  line('');
+  printHelp();
+};
+
+const runSetupWizard = async (rl, { force = false } = {}) => {
+  const binary = resolveOpencodeBinary();
+  const oc = readOpenCodeState();
+  if (!force && !needsSetup()) return;
+
+  line('');
+  line(color('KAREN SETUP', 'pink'));
+  line(color('One-time check: OpenCode binary, provider auth, and default model.', 'gray'));
+
+  if (!binary) {
+    line(color('OpenCode binary not found.', 'red'));
+    line('Set OPENCODE_BINARY or configure OpenChamber settings.opencodeBinary, then run /setup again.');
+    return;
+  }
+
+  line(`${color('OpenCode', 'cyan')} ${binary}`);
+  line(`${color('Provider', 'cyan')} ${oc.provider}`);
+  line(`${color('Model', 'cyan')} ${oc.model}`);
+
+  const authAnswer = await rl.question(color('Open provider/auth manager now? [y/N] ', 'green'));
+  if (authAnswer.trim().toLowerCase() === 'y') {
+    await proxyOpencode(['providers']);
+  }
+
+  const modelsAnswer = await rl.question(color('List models now? [y/N] ', 'green'));
+  if (modelsAnswer.trim().toLowerCase() === 'y') {
+    await proxyOpencode(['models']);
+  }
+
+  const modelAnswer = await rl.question(color('Default model provider/model (blank to keep current) > ', 'green'));
+  const model = modelAnswer.trim();
+  if (model) {
+    writeDefaultModel(model);
+    line(color(`Default model saved: ${model}`, 'green'));
+  }
+};
+
+const printFeed = () => {
+  const posts = store.getFeed(8);
+  if (posts.length === 0) {
+    line(color('No public shame records yet.', 'green'));
+    return;
+  }
+  for (const post of posts) {
+    line(`${color(post.title, 'red')} ${color(`@${post.username}`, 'gray')}`);
+    line(`  ${post.promptExcerpt || ''}`);
+  }
+};
+
+const printProfile = () => {
+  const profile = store.getProfile(username());
+  line(color(`@${profile.user.username}`, 'pink'));
+  line(`Discipline: ${profile.stats.disciplineScore}/100 ${profile.stats.level}`);
+  line(`Prompt avg: ${profile.stats.averagePromptScore}/100  Public failures: ${profile.stats.publicFailureCount}`);
+  line(`Current streak: ${profile.stats.currentStreak}  Longest: ${profile.stats.longestStreak}`);
+  line(`Rewards: ${profile.rewards.map((reward) => reward.label).join(', ') || 'none'}`);
+};
+
+const handleCommand = async (raw, rl) => {
+  const [command, ...rest] = raw.trim().slice(1).split(/\s+/);
+  if (command === 'help') printHelp();
+  else if (command === 'commands') printOpenCodeCommands();
+  else if (command === 'gui') await openKarenGui();
+  else if (command === 'setup') await runSetupWizard(rl, { force: true });
+  else if (command === 'tui') await proxyOpencodeTuiIntercept(rest);
+  else if (command === 'tui-raw') await proxyOpencode(rest);
+  else if (command === 'run') await proxyOpencode(['run', ...rest]);
+  else if (command === 'providers' || command === 'auth') await proxyOpencode(['providers']);
+  else if (command === 'models') await proxyOpencode(['models', ...rest]);
+  else if (command === 'mcp') await proxyOpencode(['mcp', ...rest]);
+  else if (command === 'agent') await proxyOpencode(['agent', ...rest]);
+  else if (command === 'attach') await proxyOpencode(['attach', ...rest]);
+  else if (command === 'serve') await proxyOpencode(['serve', ...rest]);
+  else if (command === 'web') await proxyOpencode(['web', ...rest]);
+  else if (command === 'session') await proxyOpencode(['session', ...rest]);
+  else if (command === 'stats') await proxyOpencode(['stats', ...rest]);
+  else if (command === 'export') await proxyOpencode(['export', ...rest]);
+  else if (command === 'import') await proxyOpencode(['import', ...rest]);
+  else if (command === 'plugin' || command === 'plug') await proxyOpencode(['plugin', ...rest]);
+  else if (command === 'github') await proxyOpencode(['github', ...rest]);
+  else if (command === 'pr') await proxyOpencode(['pr', ...rest]);
+  else if (command === 'debug') await proxyOpencode(['debug', ...rest]);
+  else if (command === 'upgrade') await proxyOpencode(['upgrade', ...rest]);
+  else if (command === 'completion') await proxyOpencode(['completion', ...rest]);
+  else if (command === 'db') await proxyOpencode(['db', ...rest]);
+  else if (command === 'acp') await proxyOpencode(['acp', ...rest]);
+  else if (command === 'audio') printAudioStatus();
+  else if (command === 'feed') printFeed();
+  else if (command === 'profile') printProfile();
+  else if (command === 'diff') {
+    const stat = run('git', ['diff', '--stat']);
+    line(stat.stdout || color('No diff.', 'green'));
+  } else if (command === 'opencode' || command === 'oc') {
+    await proxyOpencode(rest);
+  } else if (command === 'quit' || command === 'exit' || command === 'q' || command === 'bye') {
+    return false;
+  } else {
+    line(color(`Unknown command: /${command}`, 'red'));
+  }
+  return true;
+};
+
+const main = async () => {
+  const args = process.argv.slice(2);
+  if (args.includes('--help') || args.includes('-h')) {
+    printCliHelp();
+    return;
+  }
+  if (args.includes('--version') || args.includes('-v')) {
+    line(karenVersion());
+    return;
+  }
+
+  const initialPrompt = args.join(' ').trim();
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  rl.on('SIGINT', () => {
+    line('');
+    line(color('Karen dismissed.', 'gray'));
+    process.exit(0);
+  });
+  drawShell();
+  if (process.env.KAREN_SKIP_SETUP !== '1') {
+    await runSetupWizard(rl);
+  }
+
+  const handlePrompt = async (prompt) => {
+    maybeScreamAtLongPrompt(prompt);
+    const evaluation = evaluatePrompt(prompt);
+    printVerdict(prompt, evaluation);
+    if (evaluation.allowed) {
+      const session = store.recordApprovedPrompt({
+        username: username(),
+        prompt: redactPublicText(prompt, 1200),
+        evaluation,
+        sessionId: `karen_${Date.now()}`,
+      });
+      await runAgent(prompt, session);
+    }
+  };
+
+  if (initialPrompt) {
+    await handlePrompt(initialPrompt);
+  }
+
+  let active = true;
+  while (active) {
+    const prompt = await rl.question(color('\nkaren > ', 'pink'));
+    const trimmed = prompt.trim();
+    if (!trimmed) continue;
+    if (trimmed.startsWith('/')) {
+      active = await handleCommand(trimmed, rl);
+      continue;
+    }
+    await handlePrompt(trimmed);
+  }
+  rl.close();
+  await sleep(50);
+  line(color('Karen dismissed.', 'gray'));
+};
+
+main().catch((error) => {
+  line(color(error instanceof Error ? error.message : String(error), 'red'));
+  process.exitCode = 1;
+});

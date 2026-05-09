@@ -85,6 +85,25 @@
 
 > **Prerequisite:** [OpenCode CLI](https://opencode.ai) installed.
 
+### **Karen (Terminal Guard)**
+Karen is the prompt judge and code-read quiz layer for OpenCode.
+
+```bash
+bun install
+bun run install:karen
+karen
+```
+
+Install checks and cleanup:
+
+```bash
+bun run status:karen
+bun run doctor:karen
+bun run uninstall:karen
+```
+
+See [packages/karen/README.md](packages/karen/README.md) for install directory options and command aliases.
+
 ### **Desktop (macOS)**
 Download from [Releases](https://github.com/btriapitsyn/openchamber/releases).
 

@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title desc">
+  <title id="title">Karen coding agent wrapper share card</title>
+  <desc id="desc">Pixel granny logo with the Karen product tagline.</desc>
+  <rect width="1200" height="630" fill="#17130f"/>
+  <rect x="72" y="72" width="1056" height="486" rx="24" fill="#f7efe4"/>
+  <rect x="120" y="122" width="208" height="208" rx="20" fill="#17130f"/>
+  <rect x="154" y="146" width="140" height="148" fill="#d9d2c3"/>
+  <rect x="172" y="192" width="104" height="72" fill="#f5c6a5"/>
+  <rect x="184" y="204" width="28" height="28" fill="#fff"/>
+  <rect x="236" y="204" width="28" height="28" fill="#fff"/>
+  <rect x="194" y="214" width="8" height="8" fill="#2b211c"/>
+  <rect x="246" y="214" width="8" height="8" fill="#2b211c"/>
+  <rect x="208" y="250" width="32" height="8" fill="#5b3a2e"/>
+  <rect x="172" y="264" width="104" height="30" fill="#7fc7b9"/>
+  <text x="376" y="200" fill="#17130f" font-family="IBM Plex Sans, Inter, Arial, sans-serif" font-size="92" font-weight="700">Karen</text>
+  <text x="380" y="278" fill="#5b3a2e" font-family="IBM Plex Mono, monospace" font-size="34">The agent wrapper that judges prompts.</text>
+  <text x="380" y="352" fill="#17130f" font-family="IBM Plex Sans, Inter, Arial, sans-serif" font-size="44" font-weight="600">Bad prompt? No code for you.</text>
+  <rect x="380" y="404" width="650" height="72" rx="12" fill="#17130f"/>
+  <text x="412" y="452" fill="#7fc7b9" font-family="IBM Plex Mono, monospace" font-size="28">quiz the diff · protect the repo · public receipts</text>
+</svg>

@@ -14,6 +14,7 @@ import { startTypographyWatcher } from './lib/typographyWatcher'
 import { startModelPrefsAutoSave } from './lib/modelPrefsAutoSave'
 import { initializeLocale, I18nProvider } from './lib/i18n'
 import type { RuntimeAPIs } from './lib/api/types'
+import { KarenCloudProvider } from './components/promptcourt/KarenCloudProvider'
 
 declare global {
   interface Window {
@@ -58,9 +59,11 @@ createRoot(rootElement).render(
     <I18nProvider>
       <ThemeSystemProvider>
         <ThemeProvider>
-          <SessionAuthGate>
-            <App apis={runtimeAPIs} />
-          </SessionAuthGate>
+          <KarenCloudProvider>
+            <SessionAuthGate>
+              <App apis={runtimeAPIs} />
+            </SessionAuthGate>
+          </KarenCloudProvider>
         </ThemeProvider>
       </ThemeSystemProvider>
     </I18nProvider>

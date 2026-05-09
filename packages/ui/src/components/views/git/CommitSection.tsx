@@ -132,7 +132,7 @@ export const CommitSection: React.FC<CommitSectionProps> = ({
             ) : (
               <>
                 <RiGitCommitLine className="size-4" />
-                <span className="commit-actions__label">{t('gitView.commit.commit')}</span>
+                <span className="commit-actions__label">I read my code</span>
               </>
             )}
           </Button>
@@ -176,7 +176,7 @@ export const CommitSection: React.FC<CommitSectionProps> = ({
               ) : (
                 <>
                   <RiArrowUpLine className="size-3.5" />
-                  <span className="commit-actions__label">{t('gitView.commit.push')}</span>
+                  <span className="commit-actions__label">I read my code + push</span>
                 </>
               )}
             </Button>

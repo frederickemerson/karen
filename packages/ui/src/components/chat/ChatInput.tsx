@@ -76,6 +76,13 @@ import { useI18n } from '@/lib/i18n';
 import { fetchResponseStyleInstruction } from '@/lib/responseStyle';
 import { wrapSystemReminder } from '@/lib/systemReminder';
 import { getSyncMessages } from '@/sync/sync-refs';
+import {
+    evaluatePromptCourtPrompt,
+    getPromptCourtUsername,
+    setPromptCourtUsername,
+    type PromptCourtEvaluation,
+} from '@/lib/promptcourt';
+import { KarenLogo } from '@/components/promptcourt/KarenLogo';
 
 const MAX_VISIBLE_TEXTAREA_LINES = 8;
 const EMPTY_QUEUE: QueuedMessage[] = [];
@@ -240,6 +247,75 @@ const MemoBrowserVoiceButton = React.memo(BrowserVoiceButton);
 const MemoMobileAgentButton = React.memo(MobileAgentButton);
 const MemoMobileModelButton = React.memo(MobileModelButton);
 const MemoStatusRow = React.memo(StatusRow);
+
+const KAREN_LONG_PROMPT_THRESHOLD = 900;
+const KAREN_SCREAMS = [
+    'KAREN: THAT PROMPT HAS A BASEMENT. SPLIT IT UP.',
+    'KAREN: I AM NOT READING A WHOLE LEASE AGREEMENT.',
+    'KAREN: TOO MANY WORDS. WHERE ARE THE ACCEPTANCE CRITERIA?',
+    'KAREN: THIS PROMPT NEEDS SECTIONS, NOT VIBES.',
+    'KAREN: CTRL+A, DELETE, TRY AGAIN WITH BULLETS.',
+];
+
+type PromptCourtPanelProps = {
+    evaluation: PromptCourtEvaluation | null;
+    evaluating: boolean;
+    username: string;
+    onUsernameChange: (username: string) => void;
+};
+
+const PromptCourtPanel = React.memo(function PromptCourtPanel(props: PromptCourtPanelProps) {
+    const { evaluation, evaluating, username, onUsernameChange } = props;
+    const score = evaluation?.score ?? null;
+    const blocked = evaluation?.allowed === false;
+    const approved = evaluation?.allowed === true;
+
+    return (
+        <div className="mx-2 mb-1 rounded-md border border-border/70 bg-muted/20 px-2.5 py-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                    <KarenLogo className="size-7" mood={blocked ? 'mad' : 'calm'} />
+                    <span className="typography-ui-label font-semibold text-foreground">Karen</span>
+                    <span
+                        className={cn(
+                            'typography-micro rounded-sm px-1.5 py-0.5 font-medium',
+                            blocked
+                                ? 'bg-[var(--status-error)]/15 text-[var(--status-error)]'
+                                : approved
+                                    ? 'bg-[var(--status-success)]/15 text-[var(--status-success)]'
+                                    : 'bg-muted text-muted-foreground',
+                        )}
+                    >
+                        {evaluating ? 'Judging' : score === null ? 'Awaiting prompt' : `${score}/100 ${blocked ? 'blocked' : 'approved'}`}
+                    </span>
+                </div>
+                <div className="flex items-center gap-2">
+                    <input
+                        value={username}
+                        onChange={(event) => onUsernameChange(event.target.value)}
+                        className="h-6 w-28 rounded border border-border bg-background px-2 typography-micro text-foreground outline-none focus:border-primary"
+                        aria-label="Karen username"
+                    />
+                    <a className="typography-micro text-primary hover:underline" href={`/u/${encodeURIComponent(username)}`}>
+                        Profile
+                    </a>
+                    <a className="typography-micro text-primary hover:underline" href="/karen">
+                        Feed
+                    </a>
+                </div>
+            </div>
+            {evaluation && evaluation.reasons.length > 0 ? (
+                <div className="mt-1 flex flex-wrap gap-1">
+                    {evaluation.reasons.slice(0, 3).map((reason) => (
+                        <span key={reason} className="typography-micro rounded-sm bg-background/80 px-1.5 py-0.5 text-muted-foreground">
+                            {reason}
+                        </span>
+                    ))}
+                </div>
+            ) : null}
+        </div>
+    );
+});
 
 type ComposerAttachmentControlsProps = {
     isMobile: boolean;
@@ -737,6 +813,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({ onOpenSettings, scrollTo
     const [skillQuery, setSkillQuery] = React.useState('');
     const [textareaSize, setTextareaSize] = React.useState<{ height: number; maxHeight: number } | null>(null);
     const [mobileControlsPanel, setMobileControlsPanel] = React.useState<MobileControlsPanel>(null);
+    const [promptCourtEvaluation, setPromptCourtEvaluation] = React.useState<PromptCourtEvaluation | null>(null);
+    const [promptCourtEvaluating, setPromptCourtEvaluating] = React.useState(false);
+    const [promptCourtUsername, setPromptCourtUsernameState] = React.useState(() => getPromptCourtUsername());
+    const lastKarenScreamAtRef = React.useRef(0);
     // Message history navigation state (up/down arrow to recall previous messages)
     const [historyIndex, setHistoryIndex] = React.useState(-1); // -1 = not browsing, 0+ = index from most recent
     const [draftMessage, setDraftMessage] = React.useState(''); // Preserves input when entering history mode
@@ -1074,6 +1154,69 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({ onOpenSettings, scrollTo
     React.useEffect(() => {
         messageRef.current = message;
     }, [message]);
+
+    React.useEffect(() => {
+        const prompt = message.trim();
+        if (!prompt || inputMode === 'shell' || prompt.startsWith('/')) {
+            setPromptCourtEvaluation(null);
+            setPromptCourtEvaluating(false);
+            return;
+        }
+
+        let cancelled = false;
+        setPromptCourtEvaluating(true);
+        const timer = window.setTimeout(() => {
+            void evaluatePromptCourtPrompt(prompt)
+                .then((evaluation) => {
+                    if (!cancelled) {
+                        setPromptCourtEvaluation(evaluation);
+                    }
+                })
+                .catch(() => {
+                    if (!cancelled) {
+                        setPromptCourtEvaluation(null);
+                    }
+                })
+                .finally(() => {
+                    if (!cancelled) {
+                        setPromptCourtEvaluating(false);
+                    }
+                });
+        }, 450);
+
+        return () => {
+            cancelled = true;
+            window.clearTimeout(timer);
+        };
+    }, [inputMode, message]);
+
+    React.useEffect(() => {
+        const prompt = message.trim();
+        if (inputMode === 'shell' || prompt.startsWith('/') || prompt.length < KAREN_LONG_PROMPT_THRESHOLD) {
+            return;
+        }
+
+        const now = Date.now();
+        if (now - lastKarenScreamAtRef.current < 12000) {
+            return;
+        }
+
+        const screamChance = Math.min(0.55, (prompt.length - KAREN_LONG_PROMPT_THRESHOLD) / 1800);
+        if (Math.random() > screamChance) {
+            return;
+        }
+
+        lastKarenScreamAtRef.current = now;
+        const scream = KAREN_SCREAMS[Math.floor(Math.random() * KAREN_SCREAMS.length)] ?? KAREN_SCREAMS[0];
+        toast.warning(scream, {
+            description: `${prompt.length.toLocaleString()} chars. Karen wants shorter prompts with bullets.`,
+        });
+    }, [inputMode, message]);
+
+    const handlePromptCourtUsernameChange = React.useCallback((nextUsername: string) => {
+        const normalized = setPromptCourtUsername(nextUsername);
+        setPromptCourtUsernameState(normalized);
+    }, []);
 
     React.useEffect(() => {
         currentSessionIdForDraftRef.current = currentSessionId;
@@ -1456,6 +1599,32 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({ onOpenSettings, scrollTo
         }
 
         if (!primaryText && additionalParts.length === 0) return;
+
+        const shouldRunPromptCourt = inputMode === 'normal' && !primaryText.trimStart().startsWith('/');
+        if (shouldRunPromptCourt) {
+            const promptCourtText = [
+                primaryText,
+                ...additionalParts
+                    .filter((part) => !part.synthetic)
+                    .map((part) => part.text),
+            ].filter((part) => part.trim().length > 0).join('\n\n');
+
+            if (promptCourtText.trim()) {
+                try {
+                    const evaluation = await evaluatePromptCourtPrompt(promptCourtText, { recordBlocked: true });
+                    setPromptCourtEvaluation(evaluation);
+                    if (!evaluation.allowed) {
+                        toast.error(`Karen publicly blocked this ${evaluation.score}/100 prompt.`);
+                        textareaRef.current?.focus();
+                        return;
+                    }
+                } catch (error) {
+                    toast.error(error instanceof Error ? error.message : 'Karen evaluation failed');
+                    textareaRef.current?.focus();
+                    return;
+                }
+            }
+        }
 
         // Clear queue and input
         if (currentSessionId && hasQueuedMessages) {
@@ -3793,6 +3962,12 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({ onOpenSettings, scrollTo
                             />
                         </div>
                     </div>
+                    <PromptCourtPanel
+                        evaluation={promptCourtEvaluation}
+                        evaluating={promptCourtEvaluating}
+                        username={promptCourtUsername}
+                        onUsernameChange={handlePromptCourtUsernameChange}
+                    />
                     <div
                         className={cn(
                             'bg-transparent flex-shrink-0',

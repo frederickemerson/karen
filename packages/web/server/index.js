@@ -1169,6 +1169,7 @@ async function main(options = {}) {
 
   await featureRoutesRuntime.registerRoutes(app, {
     crypto,
+    express,
     fs,
     os,
     path,

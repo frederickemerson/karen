@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="320" height="420" viewBox="0 0 320 420" role="img" aria-labelledby="title desc">
+  <title id="title">Karen pixel grandma half-body mascot</title>
+  <desc id="desc">Cute pixel grandma mascot with glasses, cardigan, and a stern expression.</desc>
+  <rect width="320" height="420" rx="26" fill="#17130f"/>
+  <g shape-rendering="crispEdges">
+    <rect x="72" y="28" width="176" height="32" fill="#f6f0e5"/>
+    <rect x="56" y="60" width="208" height="48" fill="#d9d2c3"/>
+    <rect x="48" y="108" width="224" height="48" fill="#d9d2c3"/>
+    <rect x="64" y="92" width="192" height="128" fill="#f5c6a5"/>
+    <rect x="32" y="124" width="40" height="80" fill="#d9d2c3"/>
+    <rect x="248" y="124" width="40" height="80" fill="#d9d2c3"/>
+    <rect x="88" y="116" width="48" height="40" fill="#ffffff"/>
+    <rect x="184" y="116" width="48" height="40" fill="#ffffff"/>
+    <rect x="104" y="128" width="16" height="16" fill="#2b211c"/>
+    <rect x="200" y="128" width="16" height="16" fill="#2b211c"/>
+    <rect x="136" y="132" width="48" height="8" fill="#5b3a2e"/>
+    <rect x="148" y="164" width="24" height="12" fill="#d99373"/>
+    <rect x="120" y="188" width="80" height="12" fill="#5b3a2e"/>
+    <rect x="136" y="204" width="48" height="8" fill="#2b211c"/>
+    <rect x="88" y="220" width="144" height="32" fill="#f5c6a5"/>
+    <rect x="48" y="252" width="224" height="112" fill="#7fc7b9"/>
+    <rect x="72" y="252" width="176" height="112" fill="#9ed7ce"/>
+    <rect x="136" y="252" width="48" height="112" fill="#f7efe4"/>
+    <rect x="152" y="268" width="16" height="16" fill="#ff5a6f"/>
+    <rect x="152" y="300" width="16" height="16" fill="#ff5a6f"/>
+    <rect x="24" y="276" width="56" height="96" fill="#7fc7b9"/>
+    <rect x="240" y="276" width="56" height="96" fill="#7fc7b9"/>
+    <rect x="8" y="348" width="80" height="32" fill="#f5c6a5"/>
+    <rect x="232" y="348" width="80" height="32" fill="#f5c6a5"/>
+    <rect x="64" y="364" width="192" height="28" fill="#4b9f92"/>
+    <rect x="104" y="392" width="112" height="16" fill="#2b211c"/>
+    <rect x="36" y="80" width="32" height="32" fill="#ffffff" opacity=".36"/>
+    <rect x="252" y="72" width="24" height="24" fill="#ffffff" opacity=".30"/>
+  </g>
+</svg>

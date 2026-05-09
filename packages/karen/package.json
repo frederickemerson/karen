@@ -1,0 +1,25 @@
+{
+  "name": "karen",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "karen": "./bin/karen.js"
+  },
+  "dependencies": {
+    "node-pty": "1.2.0-beta.12",
+    "typescript": "~5.8.3"
+  },
+  "scripts": {
+    "start": "bun bin/karen.js",
+    "install-local": "node ../../scripts/install-karen.mjs install",
+    "uninstall-local": "node ../../scripts/install-karen.mjs uninstall",
+    "status-local": "node ../../scripts/install-karen.mjs status",
+    "doctor-local": "node ../../scripts/install-karen.mjs doctor",
+    "self-check": "node self-check/worktree-safe.mjs && node self-check/cli-and-installer.mjs",
+    "build": "node --check bin/karen.js",
+    "type-check": "node --check bin/karen.js",
+    "lint": "node --check bin/karen.js",
+    "clean": "node -e \"\""
+  }
+}

@@ -49,6 +49,8 @@ import { useI18n } from '@/lib/i18n';
 import { applyMobileKeyboardMode } from '@/lib/mobileKeyboardMode';
 import { SyncAppEffects } from '@/apps/AppEffects';
 import { useAppFontEffects } from '@/apps/useAppFontEffects';
+import { PromptCourtPage } from '@/components/promptcourt/PromptCourtPage';
+import { KarenLandingPage } from '@/components/promptcourt/KarenLandingPage';
 
 // Lazy-loaded heavy views — loaded on demand to reduce initial bundle size.
 const OnboardingScreen = lazyWithChunkRecovery(() =>
@@ -135,6 +137,27 @@ const isMcpOAuthCallbackPath = (): boolean => {
   return window.location.pathname === MCP_OAUTH_CALLBACK_PATH;
 };
 
+const readPromptCourtRoute = (): { username?: string | null } | null => {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+  if (window.location.pathname === '/promptcourt' || window.location.pathname === '/karen' || window.location.pathname === '/feed') {
+    return {};
+  }
+  const match = window.location.pathname.match(/^\/u\/([^/]+)$/);
+  if (match) {
+    return { username: decodeURIComponent(match[1]) };
+  }
+  return null;
+};
+
+const isKarenLandingPath = (): boolean => {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+  return window.location.pathname === '/karen/landing' || window.location.pathname === '/karen-home';
+};
+
 const EmbeddedSessionSelectionGate: React.FC<{
   embeddedSessionChat: EmbeddedSessionChatConfig | null;
   isVSCodeRuntime: boolean;
@@ -199,6 +222,8 @@ function App({ apis }: AppProps) {
   const embeddedSessionChat = React.useMemo<EmbeddedSessionChatConfig | null>(() => readEmbeddedSessionChatConfig(), []);
   const embeddedBackgroundWorkEnabled = !embeddedSessionChat || isEmbeddedVisible;
   const isMcpOAuthCallback = React.useMemo(() => isMcpOAuthCallbackPath(), []);
+  const promptCourtRoute = React.useMemo(() => readPromptCourtRoute(), []);
+  const isKarenLanding = React.useMemo(() => isKarenLandingPath(), []);
 
   React.useEffect(() => {
     setStreamPerfEnabled(showMemoryDebug);
@@ -795,6 +820,22 @@ function App({ apis }: AppProps) {
     return (
       <ErrorBoundary>
         <McpOAuthCallbackPage />
+      </ErrorBoundary>
+    );
+  }
+
+  if (isKarenLanding) {
+    return (
+      <ErrorBoundary>
+        <KarenLandingPage />
+      </ErrorBoundary>
+    );
+  }
+
+  if (promptCourtRoute) {
+    return (
+      <ErrorBoundary>
+        <PromptCourtPage username={promptCourtRoute.username} />
       </ErrorBoundary>
     );
   }
