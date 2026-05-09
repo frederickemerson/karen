@@ -335,6 +335,42 @@ const sessionView = (session: any) => ({
   completedAt: session.completedAt,
 });
 
+const profileForUser = async (ctx: any, user: any) => {
+  const [sessions, posts] = await Promise.all([
+    ctx.db.query('sessions').withIndex('by_user', (q: any) => q.eq('userId', user._id)).collect(),
+    ctx.db.query('publicPosts').withIndex('by_username', (q: any) => q.eq('username', user.username)).collect(),
+  ]);
+  return computeProfile(user, sessions, posts);
+};
+
+const emptyProfile = (usernameValue: string, overrides: Record<string, unknown> = {}) => {
+  const username = normalizeUsername(usernameValue);
+  return computeProfile({
+    username,
+    displayName: username,
+    createdAt: Date.now(),
+    ...overrides,
+  }, [], []);
+};
+
+const identityUsername = (identity: any) => normalizeUsername(
+  identity?.nickname
+  || identity?.preferredUsername
+  || identity?.username
+  || identity?.name
+  || String(identity?.email || '').split('@')[0]
+  || identity?.subject
+  || 'local-user',
+);
+
+const findUserByIdentity = async (ctx: any, identity: any) => {
+  if (!identity?.subject) return null;
+  return ctx.db
+    .query('users')
+    .withIndex('by_clerk_user', (q: any) => q.eq('clerkUserId', identity.subject))
+    .unique();
+};
+
 const computeProfile = (user: any, sessions: any[], publicPosts: any[]) => {
   const visibleSessions = sessions.filter(visibleSession);
   const visiblePosts = publicPosts.filter(visiblePost);
@@ -405,6 +441,69 @@ const computeProfile = (user: any, sessions: any[], publicPosts: any[]) => {
     recentSessions: [...visibleSessions].sort((left, right) => right.createdAt - left.createdAt).slice(0, 20).map(sessionView),
     publicPosts: [...visiblePosts].sort((left, right) => right.createdAt - left.createdAt).slice(0, 20).map(publicPostView),
   };
+};
+
+const collectVisiblePublicPosts = async (ctx: any, limit = 50) => {
+  const requestedLimit = Math.max(0, Math.min(100, Math.floor(limit)));
+  if (requestedLimit === 0) return [];
+
+  const posts = await ctx.db.query('publicPosts').collect();
+
+  return posts
+    .filter(visiblePost)
+    .sort((left: any, right: any) => right.createdAt - left.createdAt)
+    .slice(0, requestedLimit);
+};
+
+const buildLeaderboard = async (ctx: any, limit = 25) => {
+  const requestedLimit = Math.max(0, Math.min(100, Math.floor(limit)));
+  if (requestedLimit === 0) return [];
+
+  const [users, sessions, posts] = await Promise.all([
+    ctx.db.query('users').collect(),
+    ctx.db.query('sessions').collect(),
+    ctx.db.query('publicPosts').collect(),
+  ]);
+  const defaultPolicy = await getOrgPolicy(ctx, 'default');
+  const publicUsers = users.filter((user: any) => (
+    visibleUser(user)
+    && (defaultPolicy.allowLocalUsersOnLeaderboard || !String(user.clerkUserId || '').startsWith('local:'))
+  ));
+
+  const sessionsByUserId = new Map<string, any[]>();
+  for (const session of sessions.filter(visibleSession)) {
+    const key = String(session.userId);
+    const group = sessionsByUserId.get(key) ?? [];
+    group.push(session);
+    sessionsByUserId.set(key, group);
+  }
+
+  const postsByUserId = new Map<string, any[]>();
+  const postsByUsername = new Map<string, any[]>();
+  for (const post of posts.filter(visiblePost)) {
+    if (post.userId) {
+      const key = String(post.userId);
+      const group = postsByUserId.get(key) ?? [];
+      group.push(post);
+      postsByUserId.set(key, group);
+    }
+    const usernameGroup = postsByUsername.get(post.username) ?? [];
+    usernameGroup.push(post);
+    postsByUsername.set(post.username, usernameGroup);
+  }
+
+  return publicUsers
+    .map((user: any) => computeProfile(
+      user,
+      sessionsByUserId.get(String(user._id)) ?? [],
+      postsByUserId.get(String(user._id)) ?? postsByUsername.get(user.username) ?? [],
+    ))
+    .sort((left: any, right: any) => (
+      right.stats.disciplineScore - left.stats.disciplineScore
+      || right.stats.longestStreak - left.stats.longestStreak
+      || right.stats.perfectRuns - left.stats.perfectRuns
+    ))
+    .slice(0, requestedLimit);
 };
 
 const publicPostValidator = v.object({
@@ -674,7 +773,7 @@ export const overview = query({
   handler: async (ctx) => {
     const [users, posts, sessions] = await Promise.all([
       ctx.db.query('users').collect(),
-      ctx.db.query('publicPosts').order('desc').take(25),
+      collectVisiblePublicPosts(ctx, 25),
       ctx.db.query('sessions').collect(),
     ]);
 
@@ -686,14 +785,25 @@ export const overview = query({
     const visibleSessions = sessions.filter(visibleSession);
     const visiblePosts = posts.filter(visiblePost);
 
+    const sessionsByUserId = new Map<string, any[]>();
     const sessionsByUsername = new Map<string, any[]>();
     for (const session of visibleSessions) {
+      const userIdGroup = sessionsByUserId.get(String(session.userId)) ?? [];
+      userIdGroup.push(session);
+      sessionsByUserId.set(String(session.userId), userIdGroup);
+
       const group = sessionsByUsername.get(session.username) ?? [];
       group.push(session);
       sessionsByUsername.set(session.username, group);
     }
+    const postsByUserId = new Map<string, any[]>();
     const postsByUsername = new Map<string, any[]>();
     for (const post of visiblePosts) {
+      if (post.userId) {
+        const userIdGroup = postsByUserId.get(String(post.userId)) ?? [];
+        userIdGroup.push(post);
+        postsByUserId.set(String(post.userId), userIdGroup);
+      }
       const group = postsByUsername.get(post.username) ?? [];
       group.push(post);
       postsByUsername.set(post.username, group);
@@ -701,8 +811,8 @@ export const overview = query({
 
     const profiles = publicUsers.map((user) => computeProfile(
       user,
-      sessionsByUsername.get(user.username) ?? [],
-      postsByUsername.get(user.username) ?? [],
+      sessionsByUserId.get(String(user._id)) ?? sessionsByUsername.get(user.username) ?? [],
+      postsByUserId.get(String(user._id)) ?? postsByUsername.get(user.username) ?? [],
     ));
     const leaderboard = profiles
       .slice()
@@ -727,6 +837,101 @@ export const overview = query({
   },
 });
 
+export const leaderboard = query({
+  args: {
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => buildLeaderboard(ctx, args.limit ?? 25),
+});
+
+export const scoreboard = query({
+  args: {
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => buildLeaderboard(ctx, args.limit ?? 25),
+});
+
+export const publicShameFeed = query({
+  args: {
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const posts = await collectVisiblePublicPosts(ctx, args.limit ?? 50);
+    return posts.map(publicPostView);
+  },
+});
+
+export const wallOfShame = query({
+  args: {
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const posts = await collectVisiblePublicPosts(ctx, args.limit ?? 50);
+    return posts.map(publicPostView);
+  },
+});
+
+export const currentUserProfile = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
+
+    const user = await findUserByIdentity(ctx, identity);
+    if (!user) return emptyProfile(identityUsername(identity), {
+      displayName: (identity as any).name,
+      imageUrl: (identity as any).pictureUrl,
+      authProvider: 'clerk',
+      source: 'clerk',
+    });
+    return profileForUser(ctx, user);
+  },
+});
+
+export const currentProfile = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
+
+    const user = await findUserByIdentity(ctx, identity);
+    if (!user) return emptyProfile(identityUsername(identity), {
+      displayName: (identity as any).name,
+      imageUrl: (identity as any).pictureUrl,
+      authProvider: 'clerk',
+      source: 'clerk',
+    });
+    return profileForUser(ctx, user);
+  },
+});
+
+export const currentUser = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
+
+    const user = await findUserByIdentity(ctx, identity);
+    const profile = user
+      ? await profileForUser(ctx, user)
+      : emptyProfile(identityUsername(identity), {
+        displayName: (identity as any).name,
+        imageUrl: (identity as any).pictureUrl,
+        authProvider: 'clerk',
+        source: 'clerk',
+      });
+
+    return {
+      id: user?._id,
+      clerkUserId: identity.subject,
+      username: profile.user.username,
+      displayName: profile.user.displayName,
+      imageUrl: profile.user.imageUrl,
+      profile,
+    };
+  },
+});
+
 export const profile = query({
   args: {
     username: v.string(),
@@ -739,27 +944,19 @@ export const profile = query({
       .first();
 
     if (!user) {
-      return computeProfile({
-        username,
-        displayName: username,
-        createdAt: Date.now(),
-      }, [], []);
+      return emptyProfile(username);
     }
     if (!visibleUser(user)) {
-      return computeProfile({
+      return emptyProfile(username, {
         username,
         displayName: username,
         createdAt: user.createdAt,
         status: user.status ?? 'active',
         publicProfileEnabled: user.publicProfileEnabled ?? true,
-      }, [], []);
+      });
     }
 
-    const [sessions, posts] = await Promise.all([
-      ctx.db.query('sessions').withIndex('by_user', (q) => q.eq('userId', user._id)).collect(),
-      ctx.db.query('publicPosts').withIndex('by_username', (q) => q.eq('username', username)).collect(),
-    ]);
-    return computeProfile(user, sessions, posts);
+    return profileForUser(ctx, user);
   },
 });
 

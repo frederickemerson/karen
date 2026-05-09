@@ -130,7 +130,7 @@ export const BadPromptGraveyard: React.FC<BadPromptGraveyardProps> = ({
   title = 'Bad Prompt Graveyard',
 }) => {
   const badPrompts = React.useMemo(
-    () => posts.filter((post) => post.type === 'bad_prompt').slice(0, limit),
+    () => posts.filter((post) => post.type === 'bad_prompt' || post.type === 'quiz_failed').slice(0, limit),
     [limit, posts],
   );
 
@@ -140,11 +140,11 @@ export const BadPromptGraveyard: React.FC<BadPromptGraveyardProps> = ({
         <div>
           <h2 className="text-xl font-semibold tracking-normal text-foreground">{title}</h2>
           <p className="mt-1 typography-micro text-muted-foreground">
-            Bad prompts, Karen rewrites, and the charge sheet. Share responsibly. Or at least spell-check.
+            Public PromptCourt charges from all users. Share responsibly. Or at least spell-check.
           </p>
         </div>
         <span className="rounded-sm bg-muted px-2 py-1 typography-micro text-muted-foreground">
-          {badPrompts.length} buried
+          {badPrompts.length} public
         </span>
       </div>
 
@@ -158,7 +158,7 @@ export const BadPromptGraveyard: React.FC<BadPromptGraveyardProps> = ({
         <div className="rounded-md border border-dashed border-border bg-card p-5">
           <div className="typography-ui-label text-foreground">No bad prompts buried yet.</div>
           <p className="mt-1 typography-body text-muted-foreground">
-            Suspicious. Karen is checking the paperwork.
+            No public blocked prompts or quiz failures have been synced from Convex yet.
           </p>
         </div>
       )}

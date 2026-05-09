@@ -10,16 +10,23 @@ import {
   RiTimerFlashLine,
 } from '@remixicon/react';
 import { SignInButton, SignUpButton, UserButton, useUser } from '@clerk/clerk-react';
-import { useQuery } from 'convex/react';
+import { useMutation, useQuery } from 'convex/react';
 
 import { api } from '../../../../../convex/_generated/api';
-import type { PromptCourtOverview, PromptCourtProfile, PromptCourtPublicPost } from '@/lib/promptcourt';
+import {
+  getPromptCourtUsername,
+  setPromptCourtUsername,
+  type PromptCourtOverview,
+  type PromptCourtProfile,
+  type PromptCourtPublicPost,
+} from '@/lib/promptcourt';
 import { BadPromptGraveyard } from './BadPromptGraveyard';
 import { DiffQuizShowcase } from './DiffQuizShowcase';
 import { KarenMascot } from './KarenMascot';
 import { KarenLogo } from './KarenLogo';
 import { KarenReplayTape } from './KarenReplayTape';
 import { LiveLeaderboardShowcase, type LiveLeaderboardDeveloper, type LiveLeaderboardEvent } from './LiveLeaderboardShowcase';
+import { ProofProfileCard } from './ProofProfileCard';
 import { isKarenAuthConfigured, isKarenCloudConfigured } from '@/lib/karenCloudConfig';
 
 const REPO_URL = 'https://github.com/frederickemerson/karen';
@@ -338,22 +345,22 @@ const KarenLandingAuthButtons: React.FC = () => {
         </>
       ) : (
         <>
-        <SignInButton mode="modal" forceRedirectUrl="/promptcourt">
-          <button
-            type="button"
-            className="rounded-sm border border-[#111] px-4 py-2 font-mono text-xs font-semibold text-[#111]"
-          >
-            Sign in
-          </button>
-        </SignInButton>
-        <SignUpButton mode="modal" forceRedirectUrl="/promptcourt">
-          <button
-            type="button"
-            className="inline-flex items-center gap-2 rounded-sm bg-[#111] px-4 py-2 font-mono text-xs font-semibold text-[#f6f2e8]"
-          >
-            Sign up <RiArrowRightLine className="size-4" />
-          </button>
-        </SignUpButton>
+          <SignInButton mode="modal" forceRedirectUrl="/promptcourt">
+            <button
+              type="button"
+              className="rounded-sm border border-[#111] px-4 py-2 font-mono text-xs font-semibold text-[#111]"
+            >
+              Sign in
+            </button>
+          </SignInButton>
+          <SignUpButton mode="modal" forceRedirectUrl="/promptcourt">
+            <button
+              type="button"
+              className="inline-flex items-center gap-2 rounded-sm bg-[#111] px-4 py-2 font-mono text-xs font-semibold text-[#f6f2e8]"
+            >
+              Sign up <RiArrowRightLine className="size-4" />
+            </button>
+          </SignUpButton>
         </>
       )}
     </div>
@@ -377,8 +384,91 @@ const KarenLandingAuthCta: React.FC = () => {
   );
 };
 
+const usernameFromClerkUser = (user: ReturnType<typeof useUser>['user']) => (
+  user?.username
+  || user?.primaryEmailAddress?.emailAddress?.split('@')[0]
+  || user?.id
+  || getPromptCourtUsername()
+);
+
+const CurrentUserBinder = () => {
+  const { isSignedIn, user } = useUser();
+  const upsertCurrentUser = useMutation(api.karen.upsertCurrentUser);
+
+  React.useEffect(() => {
+    if (!isSignedIn || !user) return;
+    const username = setPromptCourtUsername(usernameFromClerkUser(user));
+    void upsertCurrentUser({
+      username,
+      displayName: user.fullName || user.username || undefined,
+      imageUrl: user.imageUrl || undefined,
+    }).catch((error) => {
+      console.warn('Failed to sync Karen profile', error);
+    });
+  }, [isSignedIn, upsertCurrentUser, user]);
+
+  return null;
+};
+
+const LandingAuthBinder = () => (isKarenAuthConfigured ? <CurrentUserBinder /> : null);
+
+const LandingProfileClaim: React.FC = () => {
+  if (!isKarenAuthConfigured) {
+    return (
+      <div className="rounded-md border border-[#111] bg-[#f7f7f4] p-5 shadow-[6px_6px_0_#111]">
+        <div className="font-mono text-xs uppercase tracking-[0.16em] text-[#6f6f6f]">local profile</div>
+        <h3 className="mt-2 text-2xl font-semibold tracking-normal">Use Karen locally first.</h3>
+        <p className="mt-2 text-sm leading-6 text-[#555]">
+          Convex or Clerk is not configured in this build, so Karen will use the local profile name stored by the CLI and GUI.
+        </p>
+      </div>
+    );
+  }
+
+  return <SignedInLandingProfile />;
+};
+
+const SignedInLandingProfile: React.FC = () => {
+  const { isLoaded, isSignedIn } = useUser();
+  const profile = useQuery(api.karen.currentProfile, isSignedIn ? {} : 'skip') as PromptCourtProfile | undefined;
+
+  if (!isLoaded) {
+    return (
+      <div className="rounded-md border border-[#111] bg-[#f7f7f4] p-5 font-mono text-xs uppercase tracking-[0.16em] text-[#6f6f6f]">
+        Checking auth state...
+      </div>
+    );
+  }
+
+  if (!isSignedIn) {
+    return (
+      <div className="rounded-md border border-[#111] bg-[#f7f7f4] p-5 shadow-[6px_6px_0_#111]">
+        <div className="font-mono text-xs uppercase tracking-[0.16em] text-[#6f6f6f]">profile required</div>
+        <h3 className="mt-2 text-2xl font-semibold tracking-normal">Sign in to create your PromptCourt profile.</h3>
+        <p className="mt-2 text-sm leading-6 text-[#555]">
+          Clerk signs you in, then the landing page creates or updates the matching Convex user record for the live scoreboard.
+        </p>
+        <div className="mt-4">
+          <KarenLandingAuthButtons />
+        </div>
+      </div>
+    );
+  }
+
+  if (!profile) {
+    return (
+      <div className="rounded-md border border-[#111] bg-[#f7f7f4] p-5 font-mono text-xs uppercase tracking-[0.16em] text-[#6f6f6f]">
+        Creating Convex profile...
+      </div>
+    );
+  }
+
+  return <ProofProfileCard profile={profile} proofBaseUrl={`${window.location.origin}/promptcourt`} />;
+};
+
 const LandingScoreboardSection: React.FC<{ overview?: PromptCourtOverview | null }> = ({ overview }) => {
   const { developers, events, posts, hasLiveData } = React.useMemo(() => landingDataFromOverview(overview), [overview]);
+  const hasUsers = (overview?.totals?.users ?? 0) > 0;
 
   return (
     <section id="scoreboard" className="border-y border-[#111] bg-[#17130f] px-4 py-16 text-[#f8f1e3] sm:px-6 lg:px-8">
@@ -399,18 +489,23 @@ const LandingScoreboardSection: React.FC<{ overview?: PromptCourtOverview | null
           developers={developers}
           events={events}
           live={isKarenCloudConfigured}
+          allowPreviewData={false}
           updatedLabel={hasLiveData ? 'karen.overview live' : 'no public records yet'}
           title={hasLiveData ? 'Live leaderboard for people who read the diff.' : 'Leaderboard ready for the first public run.'}
           subtitle={hasLiveData
             ? 'The landing page is reading public profile, session, and post data from Convex.'
-            : 'Once Karen syncs a public session, this panel switches from preview motion to real PromptCourt records.'}
+            : hasUsers
+              ? 'Public users exist, but no visible PromptCourt sessions have been synced yet.'
+              : 'No public users exist in Convex yet. Sign up or sync a Karen profile to create the first scoreboard entry.'}
+          emptyTitle={hasUsers ? 'No scored public runs yet.' : 'No public users yet.'}
+          emptySubtitle={hasUsers
+            ? 'Users are present, but Karen has not recorded visible prompt, quiz, or promotion stats for the leaderboard.'
+            : 'Create a profile or sync a CLI run and the first public user will appear here from Convex.'}
         />
 
-        {posts.length > 0 ? (
-          <div className="rounded-md border border-[#f8f1e3]/20 bg-[#fffaf0] p-4 text-[#17130f]">
-            <BadPromptGraveyard posts={posts} limit={3} title="Latest public prompt charges" />
-          </div>
-        ) : null}
+        <div className="rounded-md border border-[#f8f1e3]/20 bg-[#fffaf0] p-4 text-[#17130f]">
+          <BadPromptGraveyard posts={posts} limit={6} title="Live public wall of shame" />
+        </div>
       </ScrollReveal>
     </section>
   );
@@ -431,6 +526,7 @@ const KarenLandingContent: React.FC<{ overview?: PromptCourtOverview | null }> =
 
   return (
     <div className="min-h-[100dvh] w-full overflow-x-hidden bg-[#f6f2e8] text-[#111]">
+      <LandingAuthBinder />
       <ScrollBar />
       <header className="sticky top-0 z-40 border-b border-[#d8d8d8] bg-[#f6f2e8]/90 backdrop-blur">
         <nav className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-4 sm:px-6 lg:px-8">
@@ -536,7 +632,7 @@ const KarenLandingContent: React.FC<{ overview?: PromptCourtOverview | null }> =
         <LandingScoreboardSection overview={overview} />
 
         <section id="signup" className="border-b border-[#d8d8d8] bg-white px-4 py-12 sm:px-6 lg:px-8">
-          <ScrollReveal className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-6">
+          <ScrollReveal className="mx-auto grid max-w-7xl gap-6 lg:grid-cols-[0.82fr_1.18fr] lg:items-start">
             <div>
               <SectionLabel>account</SectionLabel>
               <h2 className="mt-3 text-3xl font-semibold tracking-normal sm:text-4xl">
@@ -545,8 +641,11 @@ const KarenLandingContent: React.FC<{ overview?: PromptCourtOverview | null }> =
               <p className="mt-3 max-w-2xl text-sm leading-6 text-[#555]">
                 Clerk sign-up binds your identity to the same Convex leaderboard the landing page reads.
               </p>
+              <div className="mt-5">
+                <KarenLandingAuthCta />
+              </div>
             </div>
-            <KarenLandingAuthCta />
+            <LandingProfileClaim />
           </ScrollReveal>
         </section>
 

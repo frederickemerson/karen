@@ -6,10 +6,10 @@ const karenLandingUrl = process.env.KAREN_LANDING_URL ?? 'http://127.0.0.1:3002/
 test('Karen dashboard renders as a scrollable page with the half-body mascot', async ({ page }) => {
   await page.goto(karenUrl, { waitUntil: 'domcontentloaded' });
 
-  await expect(page.getByText('Karen GUI')).toBeVisible({ timeout: 10000 });
-  await expect(page.getByRole('img', { name: /karen pixel grandma mascot/i })).toBeVisible();
+  await expect(page.getByText('Karen control room')).toBeVisible({ timeout: 10000 });
+  await expect(page.getByRole('img', { name: /karen grandma mascot/i })).toBeVisible();
 
-  const mascotBox = await page.getByRole('img', { name: /karen pixel grandma mascot/i }).boundingBox();
+  const mascotBox = await page.getByRole('img', { name: /karen grandma mascot/i }).boundingBox();
   expect(mascotBox?.height ?? 0).toBeGreaterThan(240);
 
   const before = await page.evaluate(() => ({
@@ -101,4 +101,17 @@ test('Karen landing quiz routes GUI event audio through ElevenLabs hooks', async
 
   await expect.poll(() => audioRequests.soundEffect).toBeGreaterThan(0);
   await expect.poll(() => audioRequests.speech).toBeGreaterThan(0);
+});
+
+test('Karen landing exposes signup, profile, or local install account affordance', async ({ page }) => {
+  await page.goto(karenLandingUrl, { waitUntil: 'domcontentloaded' });
+
+  await expect(page.getByRole('heading', { name: /claim your promptcourt profile/i })).toBeVisible();
+
+  const accountAffordance = page
+    .getByRole('button', { name: /sign up/i })
+    .or(page.getByRole('link', { name: /my profile/i }))
+    .or(page.getByRole('link', { name: /github/i }));
+
+  await expect(accountAffordance.first()).toBeVisible();
 });

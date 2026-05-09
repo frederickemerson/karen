@@ -38,9 +38,12 @@ type LiveLeaderboardShowcaseProps = {
   events?: LiveLeaderboardEvent[];
   className?: string;
   live?: boolean;
+  allowPreviewData?: boolean;
   title?: string;
   subtitle?: string;
   updatedLabel?: string;
+  emptyTitle?: string;
+  emptySubtitle?: string;
 };
 
 const demoDevelopers: LiveLeaderboardDeveloper[] = [
@@ -223,7 +226,7 @@ const MetricBar = ({ label, value, tone }: { label: string; value: number; tone:
   </div>
 );
 
-const StatusPill = ({ live }: { live: boolean }) => (
+const StatusPill = ({ live, label }: { live: boolean; label: string }) => (
   <div
     className={cn(
       'inline-flex items-center gap-2 rounded-sm border px-2.5 py-1.5 font-mono text-xs font-semibold uppercase tracking-[0.14em]',
@@ -236,7 +239,7 @@ const StatusPill = ({ live }: { live: boolean }) => (
       {live ? <span className="absolute inline-flex size-full animate-ping rounded-full bg-[#7bd88f] opacity-60" /> : null}
       <span className={cn('relative inline-flex size-2 rounded-full', live ? 'bg-[#7bd88f]' : 'bg-[#c9bca8]')} />
     </span>
-    {live ? 'live convex feed' : 'preview data'}
+    {label}
   </div>
 );
 
@@ -345,32 +348,37 @@ export const LiveLeaderboardShowcase: React.FC<LiveLeaderboardShowcaseProps> = (
   events,
   className = '',
   live = true,
+  allowPreviewData = false,
   title = 'Live leaderboard for people who read the diff.',
   subtitle = 'Convex-ready rankings surface prompt quality, quiz accuracy, streaks, and rollbacks avoided as the team ships.',
   updatedLabel = 'subscribed to promptcourt.leaderboard',
+  emptyTitle = 'No public users yet.',
+  emptySubtitle = 'Create a profile or sync a Karen run and the first public standings will appear here.',
 }) => {
-  const usingDemoData = !developers?.length;
+  const hasDevelopers = Boolean(developers?.length);
+  const usingDemoData = allowPreviewData && !hasDevelopers;
   const [tick, setTick] = React.useState(0);
 
   React.useEffect(() => {
-    if (!live) return undefined;
+    if (!live || (!usingDemoData && !events?.length)) return undefined;
     const timer = window.setInterval(() => setTick((value) => value + 1), 3200);
     return () => window.clearInterval(timer);
-  }, [live]);
+  }, [events?.length, live, usingDemoData]);
 
   const visibleDevelopers = React.useMemo(() => {
     if (developers?.length) {
       return [...developers].sort((a, b) => b.promptScore - a.promptScore).slice(0, 5);
     }
-    return getDemoDevelopers(tick);
-  }, [developers, tick]);
+    return usingDemoData ? getDemoDevelopers(tick) : [];
+  }, [developers, tick, usingDemoData]);
 
   const visibleEvents = React.useMemo(() => {
-    const source = events?.length ? events : demoEvents;
+    const source = events?.length ? events : usingDemoData ? demoEvents : [];
     if (events?.length) return source.slice(0, 5);
+    if (!source.length) return [];
     const offset = tick % source.length;
     return [...source.slice(offset), ...source.slice(0, offset)].slice(0, 4);
-  }, [events, tick]);
+  }, [events, tick, usingDemoData]);
 
   const aggregateStats = React.useMemo(() => {
     const totalRollbacksAvoided = visibleDevelopers.reduce((sum, developer) => sum + developer.rollbacksAvoided, 0);
@@ -385,6 +393,7 @@ export const LiveLeaderboardShowcase: React.FC<LiveLeaderboardShowcaseProps> = (
       ['rollbacks saved', String(totalRollbacksAvoided), RiGitBranchLine],
     ] as const;
   }, [visibleDevelopers]);
+  const statusLabel = live ? 'live convex feed' : usingDemoData ? 'preview data' : 'convex not configured';
 
   return (
     <section
@@ -411,7 +420,7 @@ export const LiveLeaderboardShowcase: React.FC<LiveLeaderboardShowcaseProps> = (
         <div className="flex flex-col justify-between gap-5 rounded-sm border border-[#f8f1e3]/18 bg-black/24 p-4">
           <div>
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <StatusPill live={live} />
+              <StatusPill live={live} label={statusLabel} />
               <div className="inline-flex items-center gap-2 font-mono text-xs text-[#c9bca8]">
                 <RiTerminalBoxLine className="size-4" />
                 {updatedLabel}
@@ -449,15 +458,21 @@ export const LiveLeaderboardShowcase: React.FC<LiveLeaderboardShowcaseProps> = (
                 <RiLiveLine className="size-4" />
                 recent court events
               </span>
-              <span>{usingDemoData ? 'mock stream' : 'convex data'}</span>
+              <span>{usingDemoData ? 'preview stream' : 'convex data'}</span>
             </div>
-            <ul className="grid gap-2">
-              <AnimatePresence mode="popLayout">
-                {visibleEvents.map((event, index) => (
-                  <EventRow key={event.id} event={event} index={index} />
-                ))}
-              </AnimatePresence>
-            </ul>
+            {visibleEvents.length > 0 ? (
+              <ul className="grid gap-2">
+                <AnimatePresence mode="popLayout">
+                  {visibleEvents.map((event, index) => (
+                    <EventRow key={event.id} event={event} index={index} />
+                  ))}
+                </AnimatePresence>
+              </ul>
+            ) : (
+              <div className="rounded-sm border border-[#7bd88f]/20 bg-black/20 p-3 font-mono text-xs leading-5 text-[#c9bca8]">
+                No public court events yet. Blocked prompts, quiz failures, and promoted runs will stream here from Convex.
+              </div>
+            )}
           </div>
         </div>
 
@@ -472,13 +487,21 @@ export const LiveLeaderboardShowcase: React.FC<LiveLeaderboardShowcaseProps> = (
             </div>
           </div>
 
-          <ol className="mt-4 grid gap-3">
-            <AnimatePresence mode="popLayout">
-              {visibleDevelopers.map((developer, index) => (
-                <LeaderboardRow key={developer.id} developer={developer} rank={index + 1} />
-              ))}
-            </AnimatePresence>
-          </ol>
+          {visibleDevelopers.length > 0 ? (
+            <ol className="mt-4 grid gap-3">
+              <AnimatePresence mode="popLayout">
+                {visibleDevelopers.map((developer, index) => (
+                  <LeaderboardRow key={developer.id} developer={developer} rank={index + 1} />
+                ))}
+              </AnimatePresence>
+            </ol>
+          ) : (
+            <div className="mt-4 rounded-sm border border-dashed border-[#2a241c]/40 bg-[#17130f]/5 p-5">
+              <div className="font-mono text-xs uppercase tracking-[0.16em] text-[#b7332c]">empty scoreboard</div>
+              <h4 className="mt-2 text-xl font-semibold tracking-normal">{emptyTitle}</h4>
+              <p className="mt-2 text-sm leading-6 text-[#5b5145]">{emptySubtitle}</p>
+            </div>
+          )}
         </div>
       </div>
     </section>
