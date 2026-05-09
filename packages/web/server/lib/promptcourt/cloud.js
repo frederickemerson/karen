@@ -1,29 +1,11 @@
-import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(__dirname, '../../../../..');
+import { MONOREPO_ROOT, parseEnvFile } from '../monorepo-root-env.js';
 
 const truthy = (value) => ['1', 'true', 'yes', 'on'].includes(String(value ?? '').trim().toLowerCase());
 
-const parseEnvFile = (targetPath) => {
-  try {
-    const entries = {};
-    for (const line of fs.readFileSync(targetPath, 'utf8').split(/\r?\n/)) {
-      const match = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)=(.*)\s*$/);
-      if (!match) continue;
-      entries[match[1]] = match[2].replace(/^['"]|['"]$/g, '');
-    }
-    return entries;
-  } catch {
-    return {};
-  }
-};
-
 const loadLocalEnv = (env) => ({
-  ...parseEnvFile(path.join(repoRoot, '.env')),
-  ...parseEnvFile(path.join(repoRoot, '.env.local')),
+  ...parseEnvFile(path.join(MONOREPO_ROOT, '.env')),
+  ...parseEnvFile(path.join(MONOREPO_ROOT, '.env.local')),
   ...env,
 });
 

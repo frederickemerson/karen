@@ -14,6 +14,8 @@ const enableReactScan = reactScanToggle === '1' || reactScanToggle === 'true' ||
 
 export default defineConfig({
   root: path.resolve(__dirname, '.'),
+  // Load `.env*` from monorepo root so `VITE_*` matches README / server (`packages/web/server/lib/promptcourt/cloud.js`).
+  envDir: path.resolve(__dirname, '../..'),
   plugins: [
     react({
       babel: {
