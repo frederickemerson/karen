@@ -158,6 +158,14 @@ const isKarenLandingPath = (): boolean => {
   return window.location.pathname === '/karen/landing' || window.location.pathname === '/karen-home';
 };
 
+// Public-facing deployment (e.g. Docker + ngrok). When set, the SPA only
+// renders Karen routes (landing, /karen, /promptcourt, /feed, /u/:user) and
+// falls back to the landing page for anything else - no MainLayout / editor.
+const KAREN_PUBLIC_ONLY = (() => {
+  const raw = import.meta.env.VITE_KAREN_PUBLIC_ONLY;
+  return raw === '1' || raw === 'true' || raw === true;
+})();
+
 const EmbeddedSessionSelectionGate: React.FC<{
   embeddedSessionChat: EmbeddedSessionChatConfig | null;
   isVSCodeRuntime: boolean;
@@ -836,6 +844,14 @@ function App({ apis }: AppProps) {
     return (
       <ErrorBoundary>
         <PromptCourtPage username={promptCourtRoute.username} />
+      </ErrorBoundary>
+    );
+  }
+
+  if (KAREN_PUBLIC_ONLY) {
+    return (
+      <ErrorBoundary>
+        <KarenLandingPage />
       </ErrorBoundary>
     );
   }

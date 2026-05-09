@@ -57,6 +57,8 @@
     "test:karen-gui": "playwright test tests/karen-gui.spec.ts --reporter=line",
     "start:web": "bun run --cwd packages/web start",
     "pack:web": "bun pm pack --cwd packages/web",
+    "docker:up": "docker compose up --build",
+    "docker:up:ngrok": "bash scripts/docker-ngrok.sh",
     "desktop:start-cli": "node ./packages/desktop/scripts/opencode-cli.mjs start",
     "desktop:stop-cli": "node ./packages/desktop/scripts/opencode-cli.mjs stop",
     "desktop:dev": "node ./packages/desktop/scripts/desktop-dev.mjs",

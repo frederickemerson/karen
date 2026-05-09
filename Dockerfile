@@ -9,11 +9,25 @@ COPY packages/ui/package.json ./packages/ui/
 COPY packages/web/package.json ./packages/web/
 COPY packages/desktop/package.json ./packages/desktop/
 COPY packages/vscode/package.json ./packages/vscode/
-RUN bun install --frozen-lockfile --ignore-scripts
+COPY packages/electron/package.json ./packages/electron/
+COPY packages/karen/package.json ./packages/karen/
+RUN bun install --ignore-scripts
 
 FROM deps AS builder
 WORKDIR /app
 COPY . .
+# Optional: pass from `docker compose build` / host `.env` so the Vite bundle includes
+# Karen cloud / Clerk public config (`.env*` files are not in the build context).
+ARG VITE_CONVEX_URL=
+ARG VITE_CLERK_PUBLISHABLE_KEY=
+ARG VITE_CONVEX_HTTP_ACTIONS_URL=
+# Public-only mode: when 1, the bundle hides MainLayout / code editor and
+# only exposes Karen landing + PromptCourt routes. Defaults to 1 in compose.
+ARG VITE_KAREN_PUBLIC_ONLY=
+ENV VITE_CONVEX_URL=${VITE_CONVEX_URL}
+ENV VITE_CLERK_PUBLISHABLE_KEY=${VITE_CLERK_PUBLISHABLE_KEY}
+ENV VITE_CONVEX_HTTP_ACTIONS_URL=${VITE_CONVEX_HTTP_ACTIONS_URL}
+ENV VITE_KAREN_PUBLIC_ONLY=${VITE_KAREN_PUBLIC_ONLY}
 RUN bun run build:web
 
 FROM oven/bun:1 AS runtime

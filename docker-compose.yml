@@ -3,6 +3,14 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        # Loaded from a host `.env` next to this file (not copied into the image).
+        VITE_CONVEX_URL: ${VITE_CONVEX_URL:-}
+        VITE_CLERK_PUBLISHABLE_KEY: ${VITE_CLERK_PUBLISHABLE_KEY:-}
+        VITE_CONVEX_HTTP_ACTIONS_URL: ${VITE_CONVEX_HTTP_ACTIONS_URL:-}
+        # Default to public-only: Docker deployment hides the IDE and only
+        # serves Karen landing + PromptCourt. Override with VITE_KAREN_PUBLIC_ONLY=0.
+        VITE_KAREN_PUBLIC_ONLY: ${VITE_KAREN_PUBLIC_ONLY:-1}
     container_name: openchamber
     ports:
       - "3000:3000"
@@ -15,9 +23,11 @@ services:
       - ./data/opencode/config:/home/openchamber/.config/opencode
       - ./data/ssh:/home/openchamber/.ssh
       - ./workspaces:/home/openchamber/workspaces
+    environment:
+      # Explicit for demos; entrypoint also defaults to 0.0.0.0.
+      OPENCHAMBER_HOST: "0.0.0.0"
     #environment:
-    # OPENCHAMBER_HOST: 0.0.0.0  # Bind address (default in Docker: 0.0.0.0)
-    # UI_PASSWORD: your_secure_password_here  # Uncomment to set UI password
+    # UI_PASSWORD: your_secure_password_here  # Single password for the web UI (recommended for ngrok)
     # OPENCHAMBER_TUNNEL_PROVIDER: cloudflare
     # OPENCHAMBER_TUNNEL_MODE: quick  # quick | managed-remote | managed-local
     # OPENCHAMBER_TUNNEL_HOSTNAME: app.example.com  # required for managed-remote
@@ -28,3 +38,23 @@ services:
     # OPENCODE_SKIP_START: true # skip start opencode
     # OPENCHAMBER_OPENCODE_HOSTNAME: 0.0.0.0 # Bind OpenCode to all interfaces
     restart: unless-stopped
+
+  # Optional: public HTTPS URL without port-forwarding. Requires a free ngrok account + token.
+  # Run: docker compose --profile ngrok up --build
+  # Or use host ngrok: `ngrok http 3000` (see docs/karen/operations/docker-ngrok.md).
+  ngrok:
+    image: ngrok/ngrok:latest
+    profiles:
+      - ngrok
+    depends_on:
+      openchamber:
+        condition: service_started
+    ports:
+      - "4040:4040"
+    restart: unless-stopped
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:-}
+    command:
+      - http
+      - --log=stdout
+      - http://openchamber:3000

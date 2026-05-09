@@ -73,6 +73,19 @@ CLERK_JWT_ISSUER_DOMAIN=...
 
 Full cloud setup: [`docs/karen/operations/cloud.md`](docs/karen/operations/cloud.md).
 
+## Docker + public URL (hackathon)
+
+Run the web UI locally in Docker, then tunnel it:
+
+```sh
+mkdir -p data/openchamber data/opencode/share data/opencode/state data/opencode/config data/ssh workspaces
+bun run docker:up
+# In another terminal (requires ngrok CLI + account):
+ngrok http 3000
+```
+
+Optional: run ngrok as a Compose sidecar: `bun run docker:up:ngrok` (set `NGROK_AUTHTOKEN` first). Full checklist, Convex build args, and safety notes: [`docs/karen/operations/docker-ngrok.md`](docs/karen/operations/docker-ngrok.md).
+
 ## Repo layout
 
 ```
