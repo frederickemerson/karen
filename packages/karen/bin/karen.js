@@ -18,6 +18,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '../../..');
 const karenPackagePath = path.resolve(__dirname, '../package.json');
 const configHome = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
+const stateHome = process.env.XDG_STATE_HOME || path.join(os.homedir(), '.local', 'state');
 const openchamberDataDir = path.join(configHome, 'openchamber');
 const store = createPromptCourtStore({ openchamberDataDir });
 
@@ -507,6 +508,25 @@ const prepareGeneratedDiff = (cwd) => {
   return getGitDiff(cwd);
 };
 
+const normalizeOpenCodeModel = (value, provider = null) => {
+  const model = String(value || '').trim();
+  const providerId = String(provider || '').trim();
+  if (!model || /^(y|yes|n|no)$/i.test(model)) return null;
+  if (model.includes('/')) return model;
+  if (providerId && /^[A-Za-z0-9_.-]+$/.test(providerId)) return `${providerId}/${model}`;
+  return null;
+};
+
+const readRecentOpenCodeModel = () => {
+  const modelState = readJsonish(path.join(stateHome, 'opencode', 'model.json')) || {};
+  const recent = Array.isArray(modelState.recent) ? modelState.recent : [];
+  for (const entry of recent) {
+    const model = normalizeOpenCodeModel(entry?.modelID, entry?.providerID);
+    if (model) return model;
+  }
+  return null;
+};
+
 const readOpenCodeState = () => {
   const openCodeConfig = readJsonish(process.env.OPENCODE_CONFIG || path.join(configHome, 'opencode', 'opencode.json'))
     || readJsonish(path.join(configHome, 'opencode', 'config.json'))
@@ -517,9 +537,14 @@ const readOpenCodeState = () => {
     || readJsonish(path.join(process.cwd(), '.opencode', 'opencode.jsonc'))
     || {};
   const openChamberSettings = readJsonish(path.join(configHome, 'openchamber', 'settings.json')) || {};
+  const model = normalizeOpenCodeModel(openChamberSettings.defaultModel)
+    || normalizeOpenCodeModel(openChamberSettings.currentModelId, openChamberSettings.currentProviderId)
+    || normalizeOpenCodeModel(openChamberSettings.zenModel, 'opencode')
+    || normalizeOpenCodeModel(openCodeConfig.model, openCodeConfig.provider)
+    || readRecentOpenCodeModel();
   return {
-    provider: openChamberSettings.defaultModel?.split('/')?.[0] || openChamberSettings.currentProviderId || openCodeConfig.provider || 'use /providers',
-    model: openChamberSettings.defaultModel || openChamberSettings.currentModelId || openChamberSettings.zenModel || openCodeConfig.model || 'use /models',
+    provider: model?.split('/')?.[0] || openChamberSettings.currentProviderId || openCodeConfig.provider || 'use /providers',
+    model: model || 'use /models',
     pluginCount: Array.isArray(openCodeConfig.plugin) ? openCodeConfig.plugin.length : 0,
   };
 };
@@ -1134,10 +1159,12 @@ const runSetupWizard = async (rl, { force = false } = {}) => {
   }
 
   const modelAnswer = await rl.question(color('Default model provider/model (blank to keep current) > ', 'green'));
-  const model = modelAnswer.trim();
+  const model = normalizeOpenCodeModel(modelAnswer, oc.provider);
   if (model) {
     writeDefaultModel(model);
     line(color(`Default model saved: ${model}`, 'green'));
+  } else if (modelAnswer.trim()) {
+    line(color('Default model not saved. Use provider/model, for example opencode/minimax-m2.5-free.', 'amber'));
   }
 };
 
@@ -1269,6 +1296,7 @@ export const __karenTest = {
   buildQuiz,
   classifyTuiContext,
   parseDiff,
+  normalizeOpenCodeModel,
   shouldRunAgentForEvaluation,
   shouldJudgeTuiBuffer,
   updateTuiBuffer,

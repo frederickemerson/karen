@@ -249,6 +249,13 @@ describe('Karen quiz analyzer v2', () => {
 });
 
 describe('Karen OpenCode TUI interception heuristics', () => {
+  test('normalizes OpenCode models and rejects setup yes/no answers', () => {
+    expect(__karenTest.normalizeOpenCodeModel('opencode/minimax-m2.5-free')).toBe('opencode/minimax-m2.5-free');
+    expect(__karenTest.normalizeOpenCodeModel('claude-opus-4.6', 'github-copilot')).toBe('github-copilot/claude-opus-4.6');
+    expect(__karenTest.normalizeOpenCodeModel('y')).toBe(null);
+    expect(__karenTest.normalizeOpenCodeModel('gpt-5.5', 'use /providers')).toBe(null);
+  });
+
   test('runs OpenCode for every allowed prompt after the verdict gate passes', () => {
     expect(__karenTest.shouldRunAgentForEvaluation({
       allowed: true,
