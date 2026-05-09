@@ -42,6 +42,8 @@ export type PromptCourtProfile = {
     quizPassRate: number;
     currentStreak: number;
     longestStreak: number;
+    grannySkips?: number;
+    lifetimeGrannySkips?: number;
     rollbackCount: number;
     publicFailureCount: number;
     perfectRuns: number;

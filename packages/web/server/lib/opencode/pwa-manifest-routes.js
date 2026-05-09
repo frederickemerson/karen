@@ -1,4 +1,4 @@
-const DEFAULT_PWA_APP_NAME = 'OpenChamber - AI Coding Assistant';
+const DEFAULT_PWA_APP_NAME = 'Karen - AI Code Reading Guard';
 const mapPwaOrientationToManifest = (value) => {
   if (value === 'portrait') {
     return 'portrait-primary';

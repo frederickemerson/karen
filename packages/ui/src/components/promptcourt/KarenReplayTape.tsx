@@ -26,7 +26,7 @@ const baseSteps = (outcome: 'promoted' | 'deleted'): KarenReplayStep[] => [
   {
     id: 'prompt-submitted',
     label: 'Prompt submitted',
-    description: 'User handed Karen a task to judge before execution.',
+    description: 'Karen received a scoped request and checked it before execution.',
     detail: 'Scoped to the active repo with a prompt score attached.',
     timestamp: '00:00',
     status: 'complete',
@@ -36,7 +36,7 @@ const baseSteps = (outcome: 'promoted' | 'deleted'): KarenReplayStep[] => [
     id: 'verdict',
     label: 'Verdict',
     description: 'Karen checked specificity, constraints, files, and test intent.',
-    detail: 'Approved for sandbox only. No real repo writes yet.',
+    detail: 'Approved for sandbox execution only. The real repo stays untouched.',
     timestamp: '00:07',
     status: 'complete',
     metric: 'approved',
@@ -44,8 +44,8 @@ const baseSteps = (outcome: 'promoted' | 'deleted'): KarenReplayStep[] => [
   {
     id: 'sandbox-run',
     label: 'Sandbox run',
-    description: 'OpenCode executed inside an isolated worktree.',
-    detail: 'Provider, model, MCP, and agent behavior stay inside the run cage.',
+    description: 'The coding agent executed inside an isolated worktree.',
+    detail: 'Model, tools, and file changes stay inside the run cage.',
     timestamp: '00:34',
     status: 'complete',
     metric: 'isolated',
@@ -132,7 +132,7 @@ const ReplayFrame = ({ index, active }: { index: number; active: boolean }) => (
 export const KarenReplayTape: React.FC<KarenReplayTapeProps> = ({
   className,
   title = 'Karen Replay Tape',
-  subtitle = 'A local replay of the guarded run, from prompt to patch fate.',
+  subtitle = 'A replay of the guarded run, from prompt to patch outcome.',
   outcome = 'promoted',
   steps,
 }) => {
@@ -229,7 +229,7 @@ export const KarenReplayTape: React.FC<KarenReplayTapeProps> = ({
             <div>
               <div className="typography-ui-label text-foreground">Tape controls</div>
               <div className="mt-1 typography-micro text-muted-foreground">
-                Server export returns a Remotion-ready replay contract and a fallback manifest until MP4 rendering is installed.
+                Server export returns a replay contract now; MP4 rendering can plug into that contract next.
               </div>
             </div>
             <div className="flex shrink-0 rounded-md border border-border bg-card p-1">

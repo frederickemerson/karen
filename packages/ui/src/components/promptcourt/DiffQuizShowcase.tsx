@@ -73,10 +73,12 @@ export const DiffQuizShowcase: React.FC<{ className?: string }> = ({ className =
   const [countdown, setCountdown] = React.useState(7);
   const [score, setScore] = React.useState(0);
   const [streak, setStreak] = React.useState(2);
+  const [skipTokens, setSkipTokens] = React.useState(0);
   const [soundEnabled, setSoundEnabled] = React.useState(true);
   const [selectedId, setSelectedId] = React.useState<QuizOption['id'] | null>(null);
   const [rollback, setRollback] = React.useState(false);
   const [celebrating, setCelebrating] = React.useState(false);
+  const [skipMessage, setSkipMessage] = React.useState<string | null>(null);
 
   const round = rounds[roundIndex % rounds.length];
   const isLocked = selectedId !== null || rollback || celebrating;
@@ -88,6 +90,12 @@ export const DiffQuizShowcase: React.FC<{ className?: string }> = ({ className =
       setCountdown((value) => {
         if (value <= 1) {
           window.clearInterval(timer);
+          if (skipTokens > 0) {
+            setSkipTokens((tokens) => Math.max(0, tokens - 1));
+            setSkipMessage('Granny skip spent. Patch gets one more question.');
+            setCelebrating(true);
+            return 0;
+          }
           if (soundEnabled) void playKarenEventAudio('quiz-fail');
           setSelectedId(null);
           setRollback(true);
@@ -98,7 +106,7 @@ export const DiffQuizShowcase: React.FC<{ className?: string }> = ({ className =
       });
     }, 1000);
     return () => window.clearInterval(timer);
-  }, [isLocked, roundIndex, soundEnabled]);
+  }, [isLocked, roundIndex, skipTokens, soundEnabled]);
 
   const resetForNextRound = React.useCallback(() => {
     setRoundIndex((value) => value + 1);
@@ -106,6 +114,7 @@ export const DiffQuizShowcase: React.FC<{ className?: string }> = ({ className =
     setSelectedId(null);
     setRollback(false);
     setCelebrating(false);
+    setSkipMessage(null);
   }, []);
 
   React.useEffect(() => {
@@ -126,9 +135,22 @@ export const DiffQuizShowcase: React.FC<{ className?: string }> = ({ className =
     if (option.correct) {
       if (soundEnabled) void playKarenEventAudio('quiz-pass');
       setScore((value) => value + 250 + countdown * 10);
-      setStreak((value) => value + 1);
+      setStreak((value) => {
+        const next = value + 1;
+        if (next % 3 === 0) {
+          setSkipTokens((tokens) => tokens + 1);
+          setSkipMessage('Three in a row. Karen grants one granny skip.');
+        }
+        return next;
+      });
       setCelebrating(true);
     } else {
+      if (skipTokens > 0) {
+        setSkipTokens((tokens) => Math.max(0, tokens - 1));
+        setSkipMessage('Granny skip spent. Karen pretends she did not see that.');
+        setCelebrating(true);
+        return;
+      }
       if (soundEnabled) void playKarenEventAudio('quiz-fail');
       setRollback(true);
       setStreak(0);
@@ -182,6 +204,13 @@ export const DiffQuizShowcase: React.FC<{ className?: string }> = ({ className =
               <div className="text-[#c9bca8]">timer</div>
               <div className="mt-1 text-2xl font-semibold text-[#ff6b5f]">{countdown}s</div>
             </div>
+          </div>
+
+          <div className="mt-3 flex flex-wrap items-center gap-2 rounded-sm border border-[#f8f1e3]/20 bg-[#f8f1e3]/10 p-3 font-mono text-xs text-[#f8f1e3]">
+            <span className="rounded-sm bg-[#ffcc66] px-2 py-1 font-semibold text-[#17130f]">
+              {skipTokens} granny skip{skipTokens === 1 ? '' : 's'}
+            </span>
+            <span>Earn one every 3 correct answers. It saves one bad click or timeout.</span>
           </div>
 
           <div className="mt-5 rounded-sm border border-[#f8f1e3]/20 bg-black/30 p-3">
@@ -283,9 +312,11 @@ export const DiffQuizShowcase: React.FC<{ className?: string }> = ({ className =
                 exit={{ opacity: 0, scale: 0.96 }}
               >
                 <div>
-                  <div className="font-mono text-sm uppercase tracking-[0.18em]">patch survives</div>
-                  <div className="mt-2 text-4xl font-semibold tracking-normal">Correct.</div>
-                  <p className="mt-2 max-w-sm font-mono text-sm">Karen promotes the diff because you proved you read it.</p>
+                  <div className="font-mono text-sm uppercase tracking-[0.18em]">{skipMessage ? 'granny skip' : 'patch survives'}</div>
+                  <div className="mt-2 text-4xl font-semibold tracking-normal">{skipMessage ? 'One free pass.' : 'Correct.'}</div>
+                  <p className="mt-2 max-w-sm font-mono text-sm">
+                    {skipMessage || 'Karen promotes the diff because you proved you read it.'}
+                  </p>
                 </div>
               </motion.div>
             ) : null}

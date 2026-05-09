@@ -1,20 +1,41 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title desc">
-  <title id="title">Karen coding agent wrapper share card</title>
-  <desc id="desc">Pixel granny logo with the Karen product tagline.</desc>
+  <title id="title">Karen share card</title>
+  <desc id="desc">Karen product share card with a sassy grandma mascot and concise developer tooling copy.</desc>
+  <defs>
+    <radialGradient id="hair" cx="50%" cy="34%" r="58%">
+      <stop offset="0%" stop-color="#fff7df"/>
+      <stop offset="62%" stop-color="#eadcc3"/>
+      <stop offset="100%" stop-color="#c9bda8"/>
+    </radialGradient>
+    <linearGradient id="cardigan" x1="110" x2="300" y1="390" y2="560">
+      <stop offset="0%" stop-color="#78c6ba"/>
+      <stop offset="100%" stop-color="#34796f"/>
+    </linearGradient>
+  </defs>
   <rect width="1200" height="630" fill="#17130f"/>
-  <rect x="72" y="72" width="1056" height="486" rx="24" fill="#f7efe4"/>
-  <rect x="120" y="122" width="208" height="208" rx="20" fill="#17130f"/>
-  <rect x="154" y="146" width="140" height="148" fill="#d9d2c3"/>
-  <rect x="172" y="192" width="104" height="72" fill="#f5c6a5"/>
-  <rect x="184" y="204" width="28" height="28" fill="#fff"/>
-  <rect x="236" y="204" width="28" height="28" fill="#fff"/>
-  <rect x="194" y="214" width="8" height="8" fill="#2b211c"/>
-  <rect x="246" y="214" width="8" height="8" fill="#2b211c"/>
-  <rect x="208" y="250" width="32" height="8" fill="#5b3a2e"/>
-  <rect x="172" y="264" width="104" height="30" fill="#7fc7b9"/>
-  <text x="376" y="200" fill="#17130f" font-family="IBM Plex Sans, Inter, Arial, sans-serif" font-size="92" font-weight="700">Karen</text>
-  <text x="380" y="278" fill="#5b3a2e" font-family="IBM Plex Mono, monospace" font-size="34">The agent wrapper that judges prompts.</text>
-  <text x="380" y="352" fill="#17130f" font-family="IBM Plex Sans, Inter, Arial, sans-serif" font-size="44" font-weight="600">Bad prompt? No code for you.</text>
-  <rect x="380" y="404" width="650" height="72" rx="12" fill="#17130f"/>
-  <text x="412" y="452" fill="#7fc7b9" font-family="IBM Plex Mono, monospace" font-size="28">quiz the diff · protect the repo · public receipts</text>
+  <rect x="58" y="58" width="1084" height="514" rx="28" fill="#f6f2e8"/>
+  <rect x="96" y="96" width="260" height="438" rx="20" fill="#17130f"/>
+  <path d="M126 472c22-66 74-99 132-99s111 33 132 99l16 62H110l16-62z" fill="url(#cardigan)"/>
+  <circle cx="146" cy="215" r="38" fill="url(#hair)"/>
+  <circle cx="190" cy="158" r="48" fill="url(#hair)"/>
+  <circle cx="252" cy="151" r="52" fill="url(#hair)"/>
+  <circle cx="315" cy="212" r="42" fill="url(#hair)"/>
+  <path d="M145 250c0-78 51-129 112-129s112 51 112 129c0 82-43 136-112 136s-112-54-112-136z" fill="#f0bc92"/>
+  <path d="M148 236c8-58 48-94 107-103 28 34 70 53 123 54-16-64-63-101-121-101-78 0-126 60-109 150z" fill="url(#hair)"/>
+  <circle cx="203" cy="270" r="34" fill="none" stroke="#16110e" stroke-width="10"/>
+  <circle cx="302" cy="270" r="34" fill="none" stroke="#16110e" stroke-width="10"/>
+  <path d="M237 270h31M169 269h-34M336 269h30" stroke="#16110e" stroke-width="10" stroke-linecap="round"/>
+  <path d="M176 231l54 18M278 249l54-18" stroke="#5a2b23" stroke-width="13" stroke-linecap="round"/>
+  <circle cx="207" cy="274" r="7" fill="#221611"/>
+  <circle cx="297" cy="274" r="7" fill="#221611"/>
+  <path d="M252 273l-11 37h24" fill="none" stroke="#a6624f" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M215 344c25-14 55-14 80 0" fill="none" stroke="#6f2b25" stroke-width="11" stroke-linecap="round"/>
+  <circle cx="334" cy="150" r="26" fill="#d94c42"/>
+  <text x="334" y="160" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="36" font-weight="800" fill="#fff">!</text>
+  <text x="420" y="190" fill="#17130f" font-family="Inter, Arial, sans-serif" font-size="104" font-weight="800">Karen</text>
+  <text x="426" y="270" fill="#5b3a2e" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="32" font-weight="700">The code-reading grandma for AI agents.</text>
+  <text x="426" y="356" fill="#17130f" font-family="Inter, Arial, sans-serif" font-size="50" font-weight="750">Bad prompt? No repo.</text>
+  <text x="426" y="420" fill="#444" font-family="Inter, Arial, sans-serif" font-size="34">Judge the prompt. Sandbox the patch. Quiz the diff.</text>
+  <rect x="426" y="472" width="610" height="62" rx="10" fill="#17130f"/>
+  <text x="456" y="513" fill="#7bd88f" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="25">learn while you ship · receipts included</text>
 </svg>

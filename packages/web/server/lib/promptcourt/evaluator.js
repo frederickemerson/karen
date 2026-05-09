@@ -58,6 +58,7 @@ const CONTEXT_PATTERNS = [
   /\bcurrently\b/i,
   /\bexisting\b/i,
   /\berror\b/i,
+  /\bcrash(es|ing)?\b/i,
   /\bbug\b/i,
   /\buser\b/i,
   /\brepro\b/i,
@@ -73,6 +74,35 @@ const VAGUE_PHRASES = [
   /\brefactor\b/i,
   /\bpolish\b/i,
   /\bdo your magic\b/i,
+  /\bmake.*nice\b/i,
+];
+
+const CODING_INTENT_PATTERNS = [
+  /\bfix\b/i,
+  /\bdebug\b/i,
+  /\bcrash(es|ing)?\b/i,
+  /\berror\b/i,
+  /\bfail(s|ing|ed)?\b/i,
+  /\bbug\b/i,
+  /\bslow\b/i,
+  /\bfaster\b/i,
+  /\bperf(ormance)?\b/i,
+  /\boptimi[sz]e\b/i,
+  /\brefactor\b/i,
+  /\badd\b/i,
+  /\bupdate\b/i,
+  /\bremove\b/i,
+  /\bchange\b/i,
+  /\bimplement\b/i,
+  /\btest\b/i,
+  /\bbuild\b/i,
+  /\btype-?check\b/i,
+];
+
+const HOPELESS_PROMPTS = [
+  /^\s*(do it|go|continue|yes|ok|okay|sure|ship it|make it happen)\s*[.!?]*\s*$/i,
+  /\bdo your magic\b/i,
+  /\bmake it better\b/i,
   /\bmake.*nice\b/i,
 ];
 
@@ -93,23 +123,29 @@ const scorePrompt = (rawPrompt) => {
   const riskHits = countMatches(prompt, RISK_PATTERNS);
   const contextHits = countMatches(prompt, CONTEXT_PATTERNS);
   const vagueHits = countMatches(prompt, VAGUE_PHRASES);
+  const codingIntentHits = countMatches(prompt, CODING_INTENT_PATTERNS);
+  const hopelessHits = countMatches(prompt, HOPELESS_PROMPTS);
+  const hasCodeReference = /[`'"][^`'"]+[`'"]|[\w.-]+\.(ts|tsx|js|jsx|css|json|md|py|go|rs|java|kt|swift)|\/|\b(line|stack|trace|diff|commit|branch)\b/i.test(prompt);
+  const hasConcreteIntent = codingIntentHits > 0 || specificityHits > 0 || hasCodeReference;
 
   const lengthScore = words.length >= 35 ? 10 : words.length >= 18 ? 7 : words.length >= 10 ? 4 : 1;
   const structureScore = lines.length >= 3 ? 8 : lines.length === 2 ? 5 : 2;
+  const lazyButUsableBonus = words.length >= 2 && hasConcreteIntent ? 20 : 0;
 
   const dimensions = {
-    specificGoal: clamp(lengthScore + (prompt.includes('.') ? 3 : 0) + (vagueHits === 0 ? 7 : 0), 0, 20),
+    specificGoal: clamp(lengthScore + lazyButUsableBonus + (prompt.includes('.') ? 3 : 0) + (vagueHits === 0 ? 7 : 0), 0, 20),
     scopeBoundaries: clamp(specificityHits * 7 + (/\bonly\b|\blimit\b|\bscope\b/i.test(prompt) ? 6 : 0), 0, 20),
     acceptanceCriteria: clamp(acceptanceHits * 7 + structureScore, 0, 20),
-    context: clamp(contextHits * 5 + (words.length >= 25 ? 5 : 0), 0, 15),
+    context: clamp(contextHits * 5 + (hasCodeReference ? 5 : 0) + (words.length >= 25 ? 5 : 0), 0, 15),
     verification: clamp(verificationHits * 8, 0, 15),
     riskAwareness: clamp(riskHits * 5, 0, 10),
   };
 
   let score = Object.values(dimensions).reduce((sum, value) => sum + value, 0);
-  score -= vagueHits * 8;
-  if (words.length < 6) score -= 18;
-  if (words.length < 12 && vagueHits > 0) score -= 12;
+  score -= Math.min(vagueHits * 4, 12);
+  if (words.length < 4 && !hasConcreteIntent) score -= 18;
+  if (words.length < 8 && vagueHits > 0 && !hasConcreteIntent) score -= 12;
+  if (hopelessHits > 0 && !hasCodeReference && codingIntentHits === 0) score -= 20;
   score = clamp(Math.round(score), 0, 100);
 
   const reasons = [];
@@ -119,9 +155,9 @@ const scorePrompt = (rawPrompt) => {
   if (dimensions.context < 8) reasons.push('Missing current behavior or relevant context');
   if (dimensions.verification < 8) reasons.push('No verification or test request');
   if (dimensions.riskAwareness < 5) reasons.push('No constraints for risky or unrelated changes');
-  if (vagueHits > 0) reasons.push('Vague language without operational detail');
+  if (vagueHits > 0) reasons.push(hasConcreteIntent ? 'Lazy prompt: allowed, but Karen will quiz harder' : 'Vague language without operational detail');
 
-  const verdict = score < 70 ? 'blocked' : 'approved';
+  const verdict = score < 25 || (score < 40 && !hasConcreteIntent) || (hopelessHits > 0 && !hasConcreteIntent) ? 'blocked' : 'approved';
   return {
     score,
     verdict,

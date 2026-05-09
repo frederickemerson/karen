@@ -1,20 +1,43 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
-  <title id="title">Karen pixel granny logo</title>
-  <desc id="desc">Cute pixel granny face with glasses and teal sweater.</desc>
-  <rect width="256" height="256" rx="32" fill="#17130f"/>
-  <rect x="40" y="32" width="176" height="176" rx="18" fill="#d9d2c3"/>
-  <rect x="56" y="48" width="144" height="40" fill="#eee7d8"/>
-  <rect x="64" y="88" width="128" height="96" fill="#f5c6a5"/>
-  <rect x="72" y="96" width="32" height="32" fill="#ffffff"/>
-  <rect x="152" y="96" width="32" height="32" fill="#ffffff"/>
-  <rect x="80" y="104" width="16" height="16" fill="#2b211c"/>
-  <rect x="160" y="104" width="16" height="16" fill="#2b211c"/>
-  <rect x="104" y="112" width="48" height="8" fill="#5b3a2e"/>
-  <rect x="112" y="144" width="32" height="8" fill="#5b3a2e"/>
-  <rect x="96" y="168" width="64" height="16" fill="#5b3a2e"/>
-  <rect x="56" y="184" width="144" height="32" fill="#7fc7b9"/>
-  <rect x="40" y="208" width="176" height="16" fill="#4b9f92"/>
-  <rect x="184" y="136" width="16" height="16" fill="#ff5a6f"/>
-  <rect x="200" y="120" width="16" height="16" fill="#ff5a6f"/>
-  <rect x="56" y="32" width="16" height="16" fill="#ffffff" opacity=".55"/>
+  <title id="title">Karen granny logo</title>
+  <desc id="desc">Sassy grandma face with glasses, white hair, cardigan, and a warning badge.</desc>
+  <defs>
+    <radialGradient id="hair" cx="50%" cy="34%" r="58%">
+      <stop offset="0%" stop-color="#fff7df"/>
+      <stop offset="62%" stop-color="#eadcc3"/>
+      <stop offset="100%" stop-color="#c9bda8"/>
+    </radialGradient>
+    <linearGradient id="cardigan" x1="50" x2="206" y1="184" y2="248">
+      <stop offset="0%" stop-color="#4f8f82"/>
+      <stop offset="100%" stop-color="#2f6f66"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="145%">
+      <feDropShadow dx="0" dy="8" stdDeviation="5" flood-color="#000" flood-opacity=".35"/>
+    </filter>
+  </defs>
+  <rect width="256" height="256" rx="38" fill="#17130f"/>
+  <g filter="url(#shadow)">
+    <path d="M62 206c11-33 37-50 66-50s56 17 66 50l9 42H53l9-42z" fill="url(#cardigan)"/>
+    <path d="M88 199c17 16 62 16 80 0l-9 49h-62l-9-49z" fill="#f4c19c"/>
+    <circle cx="71" cy="80" r="32" fill="url(#hair)"/>
+    <circle cx="105" cy="48" r="35" fill="url(#hair)"/>
+    <circle cx="147" cy="48" r="35" fill="url(#hair)"/>
+    <circle cx="184" cy="82" r="32" fill="url(#hair)"/>
+    <circle cx="128" cy="38" r="31" fill="url(#hair)"/>
+    <circle cx="63" cy="124" r="29" fill="url(#hair)"/>
+    <circle cx="193" cy="124" r="29" fill="url(#hair)"/>
+    <path d="M62 116c0-45 29-76 66-76s66 31 66 76c0 49-26 80-66 80s-66-31-66-80z" fill="#f3bf9a"/>
+    <path d="M64 108c6-31 28-50 61-55 16 19 40 30 70 30-9-35-36-57-67-57-42 0-73 33-64 82z" fill="url(#hair)"/>
+    <circle cx="92" cy="132" r="24" fill="none" stroke="#14100d" stroke-width="8"/>
+    <circle cx="164" cy="132" r="24" fill="none" stroke="#14100d" stroke-width="8"/>
+    <path d="M116 132h24M68 130H45M188 130h23" stroke="#14100d" stroke-width="8" stroke-linecap="round"/>
+    <path d="M78 107l34 12M145 119l34-12" stroke="#5b2b24" stroke-width="10" stroke-linecap="round"/>
+    <circle cx="94" cy="135" r="6" fill="#241813"/>
+    <circle cx="162" cy="135" r="6" fill="#241813"/>
+    <path d="M129 132l-8 23h16" fill="none" stroke="#a46250" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M102 173c16-8 36-8 52 0" fill="none" stroke="#7a2e28" stroke-width="9" stroke-linecap="round"/>
+    <path d="M73 206l34 42M185 206l-36 42" stroke="#ffcc66" stroke-width="7" stroke-linecap="round" opacity=".75"/>
+    <circle cx="197" cy="58" r="16" fill="#d94c42"/>
+    <text x="197" y="65" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="22" font-weight="800" fill="#fff">!</text>
+  </g>
 </svg>

@@ -112,6 +112,28 @@ describe('promptcourt storage', () => {
     ]);
   });
 
+  it('earns a granny skip every three clean quiz streaks', () => {
+    const store = createStore();
+    for (let index = 0; index < 3; index += 1) {
+      const session = store.recordApprovedPrompt({
+        username: 'Ada',
+        prompt: `Implement scoped change ${index} with tests.`,
+        evaluation: approvedEvaluation,
+        sessionId: `oc_skip_${index}`,
+      });
+      store.recordQuizResult({
+        sessionId: session.id,
+        quizPassed: true,
+        changedFiles: [`packages/example-${index}.ts`],
+      });
+    }
+
+    const profile = store.getProfile('ada');
+    expect(profile.stats.currentStreak).toBe(3);
+    expect(profile.stats.grannySkips).toBe(1);
+    expect(profile.rewards.map((reward) => reward.id)).toContain('granny-skip');
+  });
+
   it('cleans smoke records from local development state', () => {
     const store = createStore();
     store.recordBlockedPrompt({

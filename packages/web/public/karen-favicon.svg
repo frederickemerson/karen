@@ -1,11 +1,20 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
-  <rect width="64" height="64" rx="10" fill="#17130f"/>
-  <rect x="10" y="8" width="44" height="46" fill="#d9d2c3"/>
-  <rect x="16" y="22" width="32" height="24" fill="#f5c6a5"/>
-  <rect x="18" y="25" width="10" height="10" fill="#fff"/>
-  <rect x="36" y="25" width="10" height="10" fill="#fff"/>
-  <rect x="21" y="28" width="4" height="4" fill="#2b211c"/>
-  <rect x="39" y="28" width="4" height="4" fill="#2b211c"/>
-  <rect x="28" y="37" width="8" height="3" fill="#5b3a2e"/>
-  <rect x="16" y="46" width="32" height="8" fill="#7fc7b9"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-label="Karen">
+  <rect width="64" height="64" rx="12" fill="#17130f"/>
+  <circle cx="17" cy="21" r="8" fill="#eadcc3"/>
+  <circle cx="28" cy="13" r="9" fill="#fff7df"/>
+  <circle cx="39" cy="14" r="9" fill="#eadcc3"/>
+  <circle cx="48" cy="23" r="8" fill="#c9bda8"/>
+  <circle cx="15" cy="32" r="7" fill="#c9bda8"/>
+  <circle cx="49" cy="32" r="7" fill="#c9bda8"/>
+  <path d="M15 29c0-14 7-23 18-23s18 9 18 23c0 16-7 26-18 26S15 45 15 29z" fill="#f3bf9a"/>
+  <path d="M15 27c3-12 11-18 22-18 5 7 13 11 24 11-5-12-14-19-27-19-15 0-25 10-19 26z" fill="#eadcc3"/>
+  <circle cx="24" cy="34" r="7" fill="none" stroke="#14100d" stroke-width="3"/>
+  <circle cx="42" cy="34" r="7" fill="none" stroke="#14100d" stroke-width="3"/>
+  <path d="M31 34h4M17 34h-6M49 34h5" stroke="#14100d" stroke-width="3" stroke-linecap="round"/>
+  <path d="M20 27l10 4M37 31l10-4" stroke="#5b2b24" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="25" cy="35" r="1.8" fill="#221611"/>
+  <circle cx="41" cy="35" r="1.8" fill="#221611"/>
+  <path d="M33 35l-3 7h6" fill="none" stroke="#a46250" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M26 49c5-3 11-3 16 0" fill="none" stroke="#7a2e28" stroke-width="3" stroke-linecap="round"/>
+  <path d="M18 55c5-8 25-8 30 0v9H18v-9z" fill="#4f8f82"/>
 </svg>
