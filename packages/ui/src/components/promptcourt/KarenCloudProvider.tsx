@@ -16,7 +16,7 @@ export const KarenCloudProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   }
 
   return (
-    <ClerkProvider publishableKey={karenClerkPublishableKey} signInFallbackRedirectUrl="/karen" signUpFallbackRedirectUrl="/karen">
+    <ClerkProvider publishableKey={karenClerkPublishableKey} signInFallbackRedirectUrl="/promptcourt" signUpFallbackRedirectUrl="/promptcourt">
       <ConvexProviderWithClerk client={client} useAuth={useAuth}>
         {children}
       </ConvexProviderWithClerk>

@@ -127,10 +127,10 @@ export const ProofProfileCard = ({ profile, className, proofBaseUrl }: ProofProf
               <div className="typography-ui-label text-muted-foreground">Public Proof URL</div>
               <div className="mt-1 break-all font-mono text-sm text-foreground">{proofUrl}</div>
             </div>
-            <span className="shrink-0 rounded-sm bg-muted px-2 py-1 typography-micro text-muted-foreground">mock</span>
+            <span className="shrink-0 rounded-sm bg-muted px-2 py-1 typography-micro text-muted-foreground">live</span>
           </div>
           <p className="mt-3 typography-micro text-muted-foreground">
-            Shareable proof placeholder for prompt quality, quiz comprehension, and patches Karen allowed to survive.
+            Shareable proof for prompt quality, quiz comprehension, and patches Karen allowed to survive.
           </p>
         </div>
       </div>

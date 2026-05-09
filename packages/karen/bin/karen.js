@@ -322,6 +322,49 @@ const writeJson = (filePath, value) => {
   fs.renameSync(tmpPath, filePath);
 };
 
+const createProjectIdFromPath = (projectPath) => {
+  const normalized = String(projectPath || '').replace(/\\/g, '/').replace(/\/+$/g, '').trim();
+  if (!normalized) return '';
+  return `path_${Buffer.from(normalized, 'utf8').toString('base64url')}`;
+};
+
+const ensureGuiProjectDirectory = (directory) => {
+  const resolved = path.resolve(directory || process.cwd());
+  try {
+    if (!fs.statSync(resolved).isDirectory()) return null;
+  } catch {
+    return null;
+  }
+
+  const settingsPath = openChamberSettingsPath();
+  const settings = readJsonish(settingsPath) || {};
+  const projects = Array.isArray(settings.projects) ? settings.projects : [];
+  const existing = projects.find((project) => project && project.path === resolved) || null;
+  const project = existing || {
+    id: createProjectIdFromPath(resolved),
+    path: resolved,
+    addedAt: Date.now(),
+  };
+  const nextProjects = existing
+    ? projects.map((entry) => (entry && entry.id === existing.id ? { ...entry, lastOpenedAt: Date.now() } : entry))
+    : [...projects, { ...project, lastOpenedAt: Date.now() }];
+  const approvedDirectories = Array.from(new Set([
+    ...(Array.isArray(settings.approvedDirectories) ? settings.approvedDirectories : []),
+    resolved,
+  ]));
+
+  writeJson(settingsPath, {
+    ...settings,
+    approvedDirectories,
+    projects: nextProjects,
+    activeProjectId: project.id,
+    lastDirectory: resolved,
+    homeDirectory: settings.homeDirectory || os.homedir(),
+  });
+
+  return resolved;
+};
+
 const run = (command, args, options = {}) => spawnSync(command, args, {
   cwd: options.cwd || process.cwd(),
   encoding: 'utf8',
@@ -345,12 +388,19 @@ const isPortOpen = (port, host = '127.0.0.1') => new Promise((resolve) => {
 const openKarenGui = async () => {
   const port = Number(process.env.OPENCHAMBER_PORT || 3002);
   const url = `http://127.0.0.1:${port}/karen`;
+  const projectDirectory = ensureGuiProjectDirectory(process.cwd());
   if (await isPortOpen(port)) {
     line(color(`Karen GUI is already running: ${url}`, 'green'));
+    if (projectDirectory) {
+      line(color(`Project folder set to ${projectDirectory}. Refresh the GUI if it was already open.`, 'gray'));
+    }
     return;
   }
 
   line(color(`Starting Karen GUI at ${url}`, 'cyan'));
+  if (projectDirectory) {
+    line(color(`Project folder: ${projectDirectory}`, 'gray'));
+  }
   const child = spawn('bun', ['run', 'dev'], {
     cwd: root,
     detached: true,

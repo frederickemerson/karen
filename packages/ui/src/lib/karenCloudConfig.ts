@@ -4,5 +4,7 @@ export const karenClerkPublishableKey = (
   || import.meta.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
 ) as string | undefined;
 
-export const isKarenCloudConfigured = Boolean(karenConvexUrl);
-export const isKarenAuthConfigured = Boolean(karenConvexUrl && karenClerkPublishableKey);
+export const hasKarenConvexConfig = Boolean(karenConvexUrl);
+export const hasKarenClerkConfig = Boolean(karenClerkPublishableKey);
+export const isKarenCloudConfigured = hasKarenConvexConfig;
+export const isKarenAuthConfigured = Boolean(hasKarenConvexConfig && hasKarenClerkConfig);
