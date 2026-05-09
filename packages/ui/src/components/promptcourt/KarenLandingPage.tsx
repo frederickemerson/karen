@@ -9,13 +9,18 @@ import {
   RiShieldCheckLine,
   RiTimerFlashLine,
 } from '@remixicon/react';
-import { SignInButton, SignedIn, SignedOut, UserButton } from '@clerk/clerk-react';
+import { SignInButton, SignUpButton, UserButton, useUser } from '@clerk/clerk-react';
+import { useQuery } from 'convex/react';
 
+import { api } from '../../../../../convex/_generated/api';
+import type { PromptCourtOverview, PromptCourtProfile, PromptCourtPublicPost } from '@/lib/promptcourt';
+import { BadPromptGraveyard } from './BadPromptGraveyard';
 import { DiffQuizShowcase } from './DiffQuizShowcase';
 import { KarenMascot } from './KarenMascot';
 import { KarenLogo } from './KarenLogo';
 import { KarenReplayTape } from './KarenReplayTape';
-import { isKarenAuthConfigured } from '@/lib/karenCloudConfig';
+import { LiveLeaderboardShowcase, type LiveLeaderboardDeveloper, type LiveLeaderboardEvent } from './LiveLeaderboardShowcase';
+import { isKarenAuthConfigured, isKarenCloudConfigured } from '@/lib/karenCloudConfig';
 
 const REPO_URL = 'https://github.com/frederickemerson/karen';
 
@@ -77,6 +82,84 @@ const replayRows = [
   ['00:28', 'Quiz generated', 'exports, calls, config impact'],
   ['00:45', 'Patch promoted', 'User passed code-read check'],
 ] as const;
+
+const timeAgo = (value: number) => {
+  if (!Number.isFinite(value)) return 'unknown';
+  const seconds = Math.max(0, Math.round((Date.now() - value) / 1000));
+  if (seconds < 10) return 'now';
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  return `${Math.round(hours / 24)}d`;
+};
+
+const latestSessionAt = (profile: PromptCourtProfile) => Math.max(0, ...profile.recentSessions.map((session) => session.createdAt));
+
+const statusForProfile = (profile: PromptCourtProfile): LiveLeaderboardDeveloper['status'] => {
+  const latest = profile.recentSessions[0];
+  if (!latest) return 'idle';
+  if (Date.now() - latest.createdAt < 5 * 60 * 1000) return 'live';
+  if (latest.status.includes('quiz') || latest.status.includes('approved')) return 'reviewing';
+  return 'idle';
+};
+
+const developerFromProfile = (profile: PromptCourtProfile, index: number): LiveLeaderboardDeveloper => ({
+  id: profile.user.username,
+  name: profile.user.displayName || profile.user.username,
+  handle: profile.user.username,
+  promptScore: profile.stats.disciplineScore,
+  quizPassRate: profile.stats.quizPassRate,
+  streak: profile.stats.currentStreak || profile.stats.longestStreak,
+  rollbacksAvoided: profile.stats.promotedRuns,
+  rankDelta: index === 0 ? 1 : 0,
+  status: statusForProfile(profile),
+});
+
+const eventFromPost = (post: PromptCourtPublicPost): LiveLeaderboardEvent => ({
+  id: post.id,
+  actor: `@${post.username}`,
+  label: post.type === 'quiz_failed' ? 'quiz failed' : 'prompt blocked',
+  detail: post.title || post.promptExcerpt || 'Karen recorded a public court event.',
+  timestamp: timeAgo(post.createdAt),
+  scoreDelta: typeof post.score === 'number' ? Math.max(-25, Math.round((post.score - 70) / 3)) : undefined,
+  tone: post.type === 'quiz_failed' ? 'warn' : 'warn',
+});
+
+const eventFromProfile = (profile: PromptCourtProfile): LiveLeaderboardEvent | null => {
+  const session = profile.recentSessions[0];
+  if (!session) return null;
+  const passed = session.quizPassed === true || session.status === 'executed_quiz_passed';
+  return {
+    id: session.id,
+    actor: `@${profile.user.username}`,
+    label: passed ? 'diff quiz passed' : session.status.replace(/_/g, ' '),
+    detail: session.changedFiles?.length
+      ? `${session.changedFiles.slice(0, 2).join(', ')}${session.changedFiles.length > 2 ? ' and more' : ''}`
+      : session.prompt || 'PromptCourt session recorded.',
+    timestamp: timeAgo(session.createdAt),
+    scoreDelta: passed ? 12 : typeof session.promptScore === 'number' ? Math.round((session.promptScore - 70) / 5) : undefined,
+    tone: passed ? 'pass' : session.rollbackTriggered ? 'warn' : 'ship',
+  };
+};
+
+const landingDataFromOverview = (overview: PromptCourtOverview | null | undefined) => {
+  const ranked = overview?.leaderboard ?? [];
+  const developers = ranked.map(developerFromProfile).slice(0, 5);
+  const sessionEvents = (overview?.users ?? [])
+    .slice()
+    .sort((left, right) => latestSessionAt(right) - latestSessionAt(left))
+    .map(eventFromProfile)
+    .filter((event): event is LiveLeaderboardEvent => Boolean(event));
+  const postEvents = (overview?.feed ?? []).map(eventFromPost);
+  return {
+    developers,
+    events: [...sessionEvents, ...postEvents].slice(0, 5),
+    posts: overview?.feed ?? [],
+    hasLiveData: developers.length > 0 || postEvents.length > 0,
+  };
+};
 
 const ScrollBar = () => {
   const { scrollYProgress } = useScroll();
@@ -238,23 +321,22 @@ const RunFilm = () => (
   </div>
 );
 
-const KarenLandingAuthCta: React.FC = () => {
-  if (!isKarenAuthConfigured) {
-    return (
-      <a
-        href={REPO_URL}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="inline-flex items-center gap-2 rounded-sm bg-[#111] px-4 py-2 font-mono text-xs font-semibold text-[#f6f2e8]"
-      >
-        GitHub <RiArrowRightLine className="size-4" />
-      </a>
-    );
-  }
-
+const KarenLandingAuthButtons: React.FC = () => {
+  const { isSignedIn } = useUser();
   return (
     <div className="flex items-center gap-2">
-      <SignedOut>
+      {isSignedIn ? (
+        <>
+          <a
+            href="/promptcourt"
+            className="inline-flex items-center gap-2 rounded-sm bg-[#111] px-4 py-2 font-mono text-xs font-semibold text-[#f6f2e8]"
+          >
+            My profile <RiArrowRightLine className="size-4" />
+          </a>
+          <UserButton afterSignOutUrl="/" />
+        </>
+      ) : (
+        <>
         <SignInButton mode="modal" forceRedirectUrl="/promptcourt">
           <button
             type="button"
@@ -263,29 +345,82 @@ const KarenLandingAuthCta: React.FC = () => {
             Sign in
           </button>
         </SignInButton>
-        <SignInButton mode="modal" forceRedirectUrl="/promptcourt">
+        <SignUpButton mode="modal" forceRedirectUrl="/promptcourt">
           <button
             type="button"
             className="inline-flex items-center gap-2 rounded-sm bg-[#111] px-4 py-2 font-mono text-xs font-semibold text-[#f6f2e8]"
           >
             Sign up <RiArrowRightLine className="size-4" />
           </button>
-        </SignInButton>
-      </SignedOut>
-      <SignedIn>
-        <a
-          href="/promptcourt"
-          className="inline-flex items-center gap-2 rounded-sm bg-[#111] px-4 py-2 font-mono text-xs font-semibold text-[#f6f2e8]"
-        >
-          My profile <RiArrowRightLine className="size-4" />
-        </a>
-        <UserButton afterSignOutUrl="/" />
-      </SignedIn>
+        </SignUpButton>
+        </>
+      )}
     </div>
   );
 };
 
-export const KarenLandingPage: React.FC = () => {
+const KarenLandingAuthCta: React.FC = () => {
+  if (isKarenAuthConfigured) {
+    return <KarenLandingAuthButtons />;
+  }
+
+  return (
+    <a
+      href={REPO_URL}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="inline-flex items-center gap-2 rounded-sm bg-[#111] px-4 py-2 font-mono text-xs font-semibold text-[#f6f2e8]"
+    >
+      GitHub <RiArrowRightLine className="size-4" />
+    </a>
+  );
+};
+
+const LandingScoreboardSection: React.FC<{ overview?: PromptCourtOverview | null }> = ({ overview }) => {
+  const { developers, events, posts, hasLiveData } = React.useMemo(() => landingDataFromOverview(overview), [overview]);
+
+  return (
+    <section id="scoreboard" className="border-y border-[#111] bg-[#17130f] px-4 py-16 text-[#f8f1e3] sm:px-6 lg:px-8">
+      <ScrollReveal className="mx-auto grid max-w-7xl gap-8">
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <SectionLabel>public scoreboard</SectionLabel>
+            <h2 className="mt-4 max-w-3xl text-4xl font-semibold tracking-normal sm:text-5xl">
+              PromptCourt standings come from Convex, not a fake wall.
+            </h2>
+          </div>
+          <div className="max-w-sm font-mono text-xs uppercase tracking-[0.14em] text-[#c9bca8]">
+            {isKarenCloudConfigured ? (hasLiveData ? 'subscribed to karen.overview' : 'waiting for public records') : 'preview data until Convex is configured'}
+          </div>
+        </div>
+
+        <LiveLeaderboardShowcase
+          developers={developers}
+          events={events}
+          live={isKarenCloudConfigured}
+          updatedLabel={hasLiveData ? 'karen.overview live' : 'no public records yet'}
+          title={hasLiveData ? 'Live leaderboard for people who read the diff.' : 'Leaderboard ready for the first public run.'}
+          subtitle={hasLiveData
+            ? 'The landing page is reading public profile, session, and post data from Convex.'
+            : 'Once Karen syncs a public session, this panel switches from preview motion to real PromptCourt records.'}
+        />
+
+        {posts.length > 0 ? (
+          <div className="rounded-md border border-[#f8f1e3]/20 bg-[#fffaf0] p-4 text-[#17130f]">
+            <BadPromptGraveyard posts={posts} limit={3} title="Latest public prompt charges" />
+          </div>
+        ) : null}
+      </ScrollReveal>
+    </section>
+  );
+};
+
+const CloudKarenLandingPage: React.FC = () => {
+  const overview = useQuery(api.karen.overview) as PromptCourtOverview | undefined;
+  return <KarenLandingContent overview={overview ?? null} />;
+};
+
+const KarenLandingContent: React.FC<{ overview?: PromptCourtOverview | null }> = ({ overview }) => {
   React.useEffect(() => {
     document.documentElement.classList.add('karen-document-scroll');
     return () => {
@@ -306,6 +441,7 @@ export const KarenLandingPage: React.FC = () => {
             {navItems.map(([label, href]) => (
               <a key={href} href={href} className="hover:text-[#111]">{label}</a>
             ))}
+            <a href="#scoreboard" className="hover:text-[#111]">Scoreboard</a>
           </div>
           <KarenLandingAuthCta />
         </nav>
@@ -324,10 +460,10 @@ export const KarenLandingPage: React.FC = () => {
               </p>
               <div className="mt-8 flex flex-wrap gap-3">
                 <a
-                  href="#cli"
+                  href={isKarenAuthConfigured ? '#signup' : '#cli'}
                   className="inline-flex items-center gap-2 rounded-sm bg-[#111] px-5 py-3 font-mono text-sm font-semibold text-[#f6f2e8]"
                 >
-                  Install Karen
+                  {isKarenAuthConfigured ? 'Create account' : 'Install Karen'}
                   <RiArrowRightLine className="size-4" />
                 </a>
                 <a
@@ -393,6 +529,23 @@ export const KarenLandingPage: React.FC = () => {
                 Karen makes comprehension visible: prompt quality, changed files, quiz results, rollback history, and a profile score. It is proof of work for your real codebase, and the prize is code you can still maintain next month.
               </p>
             </div>
+          </ScrollReveal>
+        </section>
+
+        <LandingScoreboardSection overview={overview} />
+
+        <section id="signup" className="border-b border-[#d8d8d8] bg-white px-4 py-12 sm:px-6 lg:px-8">
+          <ScrollReveal className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-6">
+            <div>
+              <SectionLabel>account</SectionLabel>
+              <h2 className="mt-3 text-3xl font-semibold tracking-normal sm:text-4xl">
+                Claim your PromptCourt profile.
+              </h2>
+              <p className="mt-3 max-w-2xl text-sm leading-6 text-[#555]">
+                Clerk sign-up binds your identity to the same Convex leaderboard the landing page reads.
+              </p>
+            </div>
+            <KarenLandingAuthCta />
           </ScrollReveal>
         </section>
 
@@ -494,4 +647,12 @@ export const KarenLandingPage: React.FC = () => {
       </main>
     </div>
   );
+};
+
+export const KarenLandingPage: React.FC = () => {
+  if (isKarenCloudConfigured) {
+    return <CloudKarenLandingPage />;
+  }
+
+  return <KarenLandingContent />;
 };
