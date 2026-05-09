@@ -12,9 +12,6 @@ import {
   karenConvexUrl,
 } from '@openchamber/ui/lib/karenCloudConfig';
 
-const publicAppUrl = (import.meta.env.VITE_PUBLIC_APP_URL as string | undefined) || '';
-const signInRedirect = publicAppUrl ? `${publicAppUrl.replace(/\/$/, '')}/karen` : '/karen';
-
 const convexClient = karenConvexUrl ? new ConvexReactClient(karenConvexUrl) : null;
 
 const renderTree = () => {
@@ -31,8 +28,8 @@ const renderTree = () => {
   return (
     <ClerkProvider
       publishableKey={karenClerkPublishableKey}
-      signInFallbackRedirectUrl={signInRedirect}
-      signUpFallbackRedirectUrl={signInRedirect}
+      signInFallbackRedirectUrl="/promptcourt"
+      signUpFallbackRedirectUrl="/promptcourt"
       afterSignOutUrl="/"
     >
       <ConvexProviderWithClerk client={convexClient} useAuth={useAuth}>
