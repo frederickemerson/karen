@@ -13,7 +13,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Notes:
 // - No PWA plugin: the landing is a static brochure, not an installable app.
 // - No dev-server proxy: there is no /api on Vercel.
-// - Output directory is `landing-dist` so it does not collide with `dist`.
+// - Output directory is repo-root `landing-dist` (not under packages/web) so
+//   Vercel's default output path `landing-dist` matches the build, including
+//   when Project Settings use the monorepo root as the Root Directory.
 // - Only `landing.html` is an input; `index.html` and `mini-chat.html` are not
 //   built here so OpenCode SDK, ghostty, codemirror, etc. are not bundled.
 export default defineConfig({
@@ -39,7 +41,7 @@ export default defineConfig({
     global: 'globalThis',
   },
   build: {
-    outDir: path.resolve(__dirname, 'landing-dist'),
+    outDir: path.resolve(__dirname, '../../landing-dist'),
     emptyOutDir: true,
     chunkSizeWarningLimit: 1024,
     rollupOptions: {

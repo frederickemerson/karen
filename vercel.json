@@ -2,7 +2,7 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "installCommand": "bun install",
   "buildCommand": "bun run build:landing",
-  "outputDirectory": "packages/web/landing-dist",
+  "outputDirectory": "landing-dist",
   "framework": null,
   "cleanUrls": true,
   "trailingSlash": false,

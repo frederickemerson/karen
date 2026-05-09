@@ -94,7 +94,7 @@ Use this when you want a polished marketing/signup landing on a real domain plus
      - `VITE_CONVEX_URL` (e.g. `https://<deployment>.convex.cloud`)
      - `VITE_CONVEX_SITE_URL` (e.g. `https://<deployment>.convex.site`)
      - `VITE_PUBLIC_APP_URL` (initially blank — fill after step 3 below).
-   - Vercel will auto-detect `vercel.json` (`bun run build:landing` → `packages/web/landing-dist`).
+   - Vercel will auto-detect `vercel.json` (`bun run build:landing` → `landing-dist` at the repo root). Leave **Root Directory** empty (monorepo root). If the dashboard sets **Output Directory**, either clear it so `vercel.json` wins or set it to `landing-dist`.
 2. **Clerk dashboard**
    - Add the Vercel domain (and `*.vercel.app`) to allowed origins.
    - Set redirect URLs so post-sign-in lands on `${VITE_PUBLIC_APP_URL}/karen`.
