@@ -1,5 +1,6 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
+import { BrowserRouter } from 'react-router-dom';
 import { ClerkProvider, useAuth } from '@clerk/clerk-react';
 import { ConvexProvider, ConvexReactClient } from 'convex/react';
 import { ConvexProviderWithClerk } from 'convex/react-clerk';
@@ -15,7 +16,11 @@ import {
 const convexClient = karenConvexUrl ? new ConvexReactClient(karenConvexUrl) : null;
 
 const renderTree = () => {
-  const tree = <KarenLandingPage />;
+  const tree = (
+    <BrowserRouter>
+      <KarenLandingPage />
+    </BrowserRouter>
+  );
 
   if (!convexClient) {
     return tree;
@@ -28,8 +33,8 @@ const renderTree = () => {
   return (
     <ClerkProvider
       publishableKey={karenClerkPublishableKey}
-      signInFallbackRedirectUrl="/promptcourt"
-      signUpFallbackRedirectUrl="/promptcourt"
+      signInFallbackRedirectUrl="/scoreboard"
+      signUpFallbackRedirectUrl="/scoreboard"
       afterSignOutUrl="/"
     >
       <ConvexProviderWithClerk client={convexClient} useAuth={useAuth}>

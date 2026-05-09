@@ -1,6 +1,5 @@
 import React from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { playKarenEventAudio } from '@/lib/karenVoice';
 
 type QuizOption = {
   id: 'A' | 'B' | 'C' | 'D';
@@ -9,7 +8,7 @@ type QuizOption = {
   correct?: boolean;
 };
 
-type QuizRound = {
+export type QuizRound = {
   changedFile: string;
   diffStat: string;
   question: string;
@@ -68,19 +67,69 @@ const codeLines = [
 
 const clampCountdown = (value: number) => Math.max(0, Math.min(7, value));
 
-export const DiffQuizShowcase: React.FC<{ className?: string }> = ({ className = '' }) => {
+const useKahootMusic = (enabled: boolean) => {
+  React.useEffect(() => {
+    if (!enabled || typeof window === 'undefined') return undefined;
+    const AudioCtor = window.AudioContext
+      || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioCtor) return undefined;
+
+    const context = new AudioCtor();
+    const master = context.createGain();
+    master.gain.value = 0.04;
+    master.connect(context.destination);
+
+    let index = 0;
+    // Fast bouncy Kahoot-ish loop in C major.
+    const notes = [392, 523.25, 659.25, 523.25, 440, 587.33, 698.46, 587.33, 392, 523.25, 783.99, 523.25];
+    const tick = () => {
+      const oscillator = context.createOscillator();
+      oscillator.type = 'square';
+      oscillator.frequency.value = notes[index % notes.length];
+      const env = context.createGain();
+      env.gain.setValueAtTime(0.0001, context.currentTime);
+      env.gain.exponentialRampToValueAtTime(0.6, context.currentTime + 0.02);
+      env.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.18);
+      oscillator.connect(env);
+      env.connect(master);
+      oscillator.start();
+      oscillator.stop(context.currentTime + 0.2);
+      index += 1;
+    };
+
+    void context.resume().then(tick).catch(() => {});
+    const interval = window.setInterval(tick, 240);
+
+    return () => {
+      window.clearInterval(interval);
+      void context.close().catch(() => {});
+    };
+  }, [enabled]);
+};
+
+export const DiffQuizShowcase: React.FC<{
+  className?: string;
+  rounds?: QuizRound[];
+  onWrongAnswerCaption?: string;
+}> = ({
+  className = '',
+  rounds: roundsProp,
+  onWrongAnswerCaption = 'The sandbox gets tossed. The real repo stays clean. Karen opens the lesson screen next.',
+}) => {
   const [roundIndex, setRoundIndex] = React.useState(0);
   const [countdown, setCountdown] = React.useState(7);
   const [score, setScore] = React.useState(0);
   const [streak, setStreak] = React.useState(2);
   const [skipTokens, setSkipTokens] = React.useState(0);
-  const [soundEnabled, setSoundEnabled] = React.useState(true);
+  const [soundEnabled, setSoundEnabled] = React.useState(false);
   const [selectedId, setSelectedId] = React.useState<QuizOption['id'] | null>(null);
   const [rollback, setRollback] = React.useState(false);
   const [celebrating, setCelebrating] = React.useState(false);
   const [skipMessage, setSkipMessage] = React.useState<string | null>(null);
+  useKahootMusic(soundEnabled);
 
-  const round = rounds[roundIndex % rounds.length];
+  const activeRounds = roundsProp?.length ? roundsProp : rounds;
+  const round = activeRounds[roundIndex % activeRounds.length];
   const isLocked = selectedId !== null || rollback || celebrating;
   const countdownRatio = clampCountdown(countdown) / 7;
 
@@ -96,7 +145,6 @@ export const DiffQuizShowcase: React.FC<{ className?: string }> = ({ className =
             setCelebrating(true);
             return 0;
           }
-          if (soundEnabled) void playKarenEventAudio('quiz-fail');
           setSelectedId(null);
           setRollback(true);
           setStreak(0);
@@ -133,7 +181,6 @@ export const DiffQuizShowcase: React.FC<{ className?: string }> = ({ className =
     if (isLocked) return;
     setSelectedId(option.id);
     if (option.correct) {
-      if (soundEnabled) void playKarenEventAudio('quiz-pass');
       setScore((value) => value + 250 + countdown * 10);
       setStreak((value) => {
         const next = value + 1;
@@ -151,7 +198,6 @@ export const DiffQuizShowcase: React.FC<{ className?: string }> = ({ className =
         setCelebrating(true);
         return;
       }
-      if (soundEnabled) void playKarenEventAudio('quiz-fail');
       setRollback(true);
       setStreak(0);
     }
@@ -173,91 +219,7 @@ export const DiffQuizShowcase: React.FC<{ className?: string }> = ({ className =
         }}
       />
 
-      <div className="relative z-10 grid min-w-0 gap-4 lg:grid-cols-[0.82fr_1.18fr]">
-        <div className="min-w-0 rounded-sm border border-[#2a241c] bg-[#17130f] p-4 text-[#f8f1e3]">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <div className="font-mono text-xs uppercase tracking-[0.18em] text-[#ffcc66]">Karen live quiz</div>
-              <h2 className="mt-2 text-3xl font-semibold tracking-normal sm:text-4xl">Read the diff or lose the patch.</h2>
-            </div>
-            <motion.button
-              type="button"
-              onClick={() => setSoundEnabled((value) => !value)}
-              className="shrink-0 rounded-sm border border-[#f8f1e3]/30 px-3 py-2 font-mono text-xs text-[#f8f1e3] hover:bg-[#f8f1e3] hover:text-[#17130f]"
-              whileTap={{ scale: 0.96 }}
-              aria-pressed={soundEnabled}
-            >
-              {soundEnabled ? 'sound on' : 'sound off'}
-            </motion.button>
-          </div>
-
-          <div className="mt-5 grid grid-cols-3 gap-2 font-mono text-xs">
-            <div className="rounded-sm border border-[#f8f1e3]/20 bg-[#f8f1e3]/10 p-3">
-              <div className="text-[#c9bca8]">score</div>
-              <div className="mt-1 text-2xl font-semibold text-[#ffcc66]">{score}</div>
-            </div>
-            <div className="rounded-sm border border-[#f8f1e3]/20 bg-[#f8f1e3]/10 p-3">
-              <div className="text-[#c9bca8]">streak</div>
-              <div className="mt-1 text-2xl font-semibold text-[#7bd88f]">{streak}x</div>
-            </div>
-            <div className="rounded-sm border border-[#f8f1e3]/20 bg-[#f8f1e3]/10 p-3">
-              <div className="text-[#c9bca8]">timer</div>
-              <div className="mt-1 text-2xl font-semibold text-[#ff6b5f]">{countdown}s</div>
-            </div>
-          </div>
-
-          <div className="mt-3 flex flex-wrap items-center gap-2 rounded-sm border border-[#f8f1e3]/20 bg-[#f8f1e3]/10 p-3 font-mono text-xs text-[#f8f1e3]">
-            <span className="rounded-sm bg-[#ffcc66] px-2 py-1 font-semibold text-[#17130f]">
-              {skipTokens} granny skip{skipTokens === 1 ? '' : 's'}
-            </span>
-            <span>Earn one every 3 correct answers. It saves one bad click or timeout.</span>
-          </div>
-
-          <div className="mt-5 rounded-sm border border-[#f8f1e3]/20 bg-black/30 p-3">
-            <div className="mb-2 flex items-center justify-between gap-2 font-mono text-xs text-[#c9bca8]">
-              <span className="min-w-0 break-all">{round.changedFile}</span>
-              <span>{round.diffStat}</span>
-            </div>
-            <div className="space-y-1 overflow-hidden font-mono text-xs leading-5">
-              {codeLines.map((line, index) => (
-                <motion.div
-                  key={`${line}-${index}`}
-                  className={line.startsWith('+') ? 'text-[#7bd88f]' : 'text-[#ff8a80]'}
-                  animate={rollback ? { x: [0, -6, 6, -4, 0], opacity: [1, 0.7, 1] } : undefined}
-                  transition={{ duration: 0.45, delay: index * 0.04 }}
-                >
-                  {line}
-                </motion.div>
-              ))}
-            </div>
-          </div>
-
-          <div className="mt-4 h-2 overflow-hidden rounded-full bg-[#f8f1e3]/15">
-            <motion.div
-              className="h-full origin-left bg-[#ffcc66]"
-              animate={{ scaleX: countdownRatio }}
-              transition={{ duration: 0.25 }}
-              style={{ width: '100%' }}
-            />
-          </div>
-
-          {soundEnabled ? (
-            <div className="mt-4 flex h-8 items-end gap-1" aria-hidden="true">
-              {[0, 1, 2, 3, 4, 5, 6, 7].map((bar) => (
-                <motion.span
-                  key={bar}
-                  className="w-2 rounded-t-sm bg-[#ffcc66]"
-                  animate={{ height: [8, 24 - (bar % 3) * 4, 10] }}
-                  transition={{ duration: 0.45, repeat: Infinity, delay: bar * 0.06 }}
-                />
-              ))}
-              <span className="ml-2 self-center font-mono text-xs text-[#c9bca8]">browser UI only</span>
-            </div>
-          ) : (
-            <div className="mt-4 font-mono text-xs text-[#c9bca8]">silent mode still judges you.</div>
-          )}
-        </div>
-
+      <div className="relative z-10 grid min-w-0 gap-4">
         <div className="relative min-w-0 rounded-sm border border-[#2a241c] bg-[#fffaf0] p-4">
           <div className="flex min-w-0 items-start justify-between gap-4">
             <div>
@@ -342,11 +304,9 @@ export const DiffQuizShowcase: React.FC<{ className?: string }> = ({ className =
                       animate={{ scale: [1, 1.08, 1] }}
                       transition={{ duration: 0.5, repeat: 2 }}
                     >
-                      ROLLBACK
+                      git reset --hard
                     </motion.div>
-                    <p className="mx-auto mt-3 max-w-sm font-mono text-sm">
-                      The sandbox gets tossed. The real repo stays clean. Karen opens the lesson screen next.
-                    </p>
+                    <p className="mx-auto mt-3 max-w-sm font-mono text-sm">{onWrongAnswerCaption}</p>
                   </div>
                 </div>
               </motion.div>
