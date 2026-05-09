@@ -9,7 +9,7 @@ type QuizOption = {
   correct?: boolean;
 };
 
-type QuizRound = {
+export type QuizRound = {
   changedFile: string;
   diffStat: string;
   question: string;
@@ -68,7 +68,15 @@ const codeLines = [
 
 const clampCountdown = (value: number) => Math.max(0, Math.min(7, value));
 
-export const DiffQuizShowcase: React.FC<{ className?: string }> = ({ className = '' }) => {
+export const DiffQuizShowcase: React.FC<{
+  className?: string;
+  rounds?: QuizRound[];
+  onWrongAnswerCaption?: string;
+}> = ({
+  className = '',
+  rounds: roundsProp,
+  onWrongAnswerCaption = 'The sandbox gets tossed. The real repo stays clean. Karen opens the lesson screen next.',
+}) => {
   const [roundIndex, setRoundIndex] = React.useState(0);
   const [countdown, setCountdown] = React.useState(7);
   const [score, setScore] = React.useState(0);
@@ -80,7 +88,8 @@ export const DiffQuizShowcase: React.FC<{ className?: string }> = ({ className =
   const [celebrating, setCelebrating] = React.useState(false);
   const [skipMessage, setSkipMessage] = React.useState<string | null>(null);
 
-  const round = rounds[roundIndex % rounds.length];
+  const activeRounds = roundsProp?.length ? roundsProp : rounds;
+  const round = activeRounds[roundIndex % activeRounds.length];
   const isLocked = selectedId !== null || rollback || celebrating;
   const countdownRatio = clampCountdown(countdown) / 7;
 
@@ -344,9 +353,7 @@ export const DiffQuizShowcase: React.FC<{ className?: string }> = ({ className =
                     >
                       ROLLBACK
                     </motion.div>
-                    <p className="mx-auto mt-3 max-w-sm font-mono text-sm">
-                      The sandbox gets tossed. The real repo stays clean. Karen opens the lesson screen next.
-                    </p>
+                    <p className="mx-auto mt-3 max-w-sm font-mono text-sm">{onWrongAnswerCaption}</p>
                   </div>
                 </div>
               </motion.div>

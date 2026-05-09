@@ -6,11 +6,11 @@ status: active
 
 # PromptCourt UI
 
-Karen's web scoreboard. The CLI is the product; this surface renders the public side: the bad-prompt graveyard, the badge wall, the leaderboard, the replay tape, the courtroom showcase, and the live profile page. The UI is read-mostly: it queries Convex (when configured) or falls back to PromptCourt server records, never mutates verdicts.
+Karen's web scoreboard. The CLI is the product; this surface renders the public side: the bad-prompt graveyard, the leaderboard, the mock shame feed, and the live profile page. The UI is read-mostly: it queries Convex (when configured) or falls back to PromptCourt server records, never mutates verdicts.
 
 ## Agent TL;DR
 
-- 15 components. `KarenCloudProvider` wraps the tree with Convex + Clerk; `PromptCourtPage` is the live profile page; `KarenLandingPage` is the marketing page; everything else is a showcase, panel, or modal mounted into one of those two pages.
+- 23 components/modules. `KarenCloudProvider` wraps the tree with Convex + Clerk; `PromptCourtPage` is the live profile page; `KarenLandingPage` is the router shell for the 4-page landing flow.
 - All Karen color intent comes from [`../../../../../docs/karen/03-design.md`](../../../../../docs/karen/03-design.md). Use the inherited theme tokens; do not hardcode hex values.
 - Live data sources: Convex queries via `useQuery` from `convex/react`, plus the inherited `/api/promptcourt/*` HTTP routes for run streams. Never derive verdicts client-side.
 - This surface inherits the OpenChamber app shell, theming, and primitives ([Base UI](https://base-ui.com/), Tailwind v4, the typography helpers in `packages/ui/src/lib/typography.ts`).
@@ -24,11 +24,10 @@ Make Karen's records public, glanceable, and arcade-shaped. Convert PromptCourt'
 
 - [`PromptCourtPage.tsx`](PromptCourtPage.tsx) - the live profile page. Composes `LaunchControls`, `LiveRunStream`, `RecentSessions`, `ProfilePanel`, `BadPromptGraveyard`, `ProofProfileCard`, and the auto-mounting `KarenQuizGameModal`. Subscribes to `/api/promptcourt/runs/events` SSE for the global live run stream and, when launching a guarded run from the browser, to `/api/promptcourt/gui-runs/:runId/events` for that run's lifecycle. Auto-opens `KarenQuizGameModal` once per run when status hits `quiz_required`. Reads PromptCourt overview/profile data from Convex when configured and falls back to local data when not.
 - [`KarenQuizGameModal.tsx`](KarenQuizGameModal.tsx) - full-screen Kahoot-style quiz overlay shown when a GUI run reaches `quiz_required`. Reads the diff and questions off the run, plays a Kahoot-inspired music loop, speaks each question through the Karen ElevenLabs TTS proxy (with browser TTS fallback), and walks the user through `intro` → `question` → `wrong`/`passed` stages. Submits answers, completion, and abandonment via `submitGuiAnswer`, `completeGuiQuiz`, and `abandonGuiQuiz` from `../../../lib/promptcourt.ts`.
-- [`KarenLandingPage.tsx`](KarenLandingPage.tsx) - the public marketing page. Assembles the courtroom showcase, replay tape, badge wall, leaderboard, voice panel, and graveyard into a single scrollable surface.
+- [`KarenLandingPage.tsx`](KarenLandingPage.tsx) - the public landing router shell. Renders the sticky nav and routes for `/`, `/how-it-works`, `/scoreboard`, `/install`.
 - [`KarenCloudProvider.tsx`](KarenCloudProvider.tsx) - root provider. Wraps children in `ConvexProviderWithClerk` (when configured) or a no-op fallback. Reads `VITE_CONVEX_URL` and `VITE_CLERK_PUBLISHABLE_KEY`.
 - [`BadPromptGraveyard.tsx`](BadPromptGraveyard.tsx) - card-grid view of blocked-prompt public posts with score-tone classes (awful, weak, appeal) and a share button that copies a redacted excerpt.
 - [`KarenBadgeWall.tsx`](KarenBadgeWall.tsx) - reward badges with progress bars and initials, derived from PromptCourt rewards.
-- [`KarenReplayTape.tsx`](KarenReplayTape.tsx) - filmstrip animation of a Karen run from prompt -> verdict -> worktree -> quiz -> outcome (promoted or deleted).
 - [`CourtroomDemo.tsx`](CourtroomDemo.tsx) - scripted demo transcript of a Karen run for the landing page.
 - [`DiffQuizShowcase.tsx`](DiffQuizShowcase.tsx) - mini interactive quiz preview with a countdown.
 - [`LiveLeaderboardShowcase.tsx`](LiveLeaderboardShowcase.tsx) - leaderboard view backed by `getOverview` data with rank highlighting.
@@ -37,6 +36,15 @@ Make Karen's records public, glanceable, and arcade-shaped. Convert PromptCourt'
 - [`ProofProfileCard.tsx`](ProofProfileCard.tsx) - single-card public profile summary, used standalone and inside the live page.
 - [`DeleteOrDefend.tsx`](DeleteOrDefend.tsx) - interactive challenge mini-game where users decide to keep or roll back a generated diff under time pressure.
 - [`GrandmaVoicePanel.tsx`](GrandmaVoicePanel.tsx) - settings panel for the Karen voice (mood, ElevenLabs voice id, server-side TTS proxy info, preview). Persists settings to `localStorage` under `KAREN_VOICE_STORAGE_KEY`.
+- [`landing/Home.tsx`](landing/Home.tsx) - home route hero page with the confrontational pitch and mascot.
+- [`landing/HowItWorks.tsx`](landing/HowItWorks.tsx) - route showing the pipeline strip, prompt judge examples, and commit-interrupt quiz.
+- [`landing/Scoreboard.tsx`](landing/Scoreboard.tsx) - route combining `LiveLeaderboardShowcase`, `BadPromptGraveyard`, and `KarenShameTweetWall`.
+- [`landing/Install.tsx`](landing/Install.tsx) - route with install commands and CTA.
+- [`landing/KarenPipelineStrip.tsx`](landing/KarenPipelineStrip.tsx) - concise visual flow from prompt to verdict.
+- [`landing/KarenCommitInterrupt.tsx`](landing/KarenCommitInterrupt.tsx) - TaskMaster commit frame and quiz handoff.
+- [`landing/KarenShameTweetWall.tsx`](landing/KarenShameTweetWall.tsx) - mock `@karen-code` X-style shame feed for landing storytelling.
+- [`landing/karenShameTweets.ts`](landing/karenShameTweets.ts) - deterministic mock tweet records.
+- [`landing/LandingAuthCta.tsx`](landing/LandingAuthCta.tsx) - shared auth/CTA element used by the landing nav.
 
 ## Contract
 
@@ -45,7 +53,7 @@ Public exports:
 - `KarenCloudProvider` - root provider used by the inherited app shell to gate Karen UI behind Convex + Clerk readiness.
 - `PromptCourtPage` - the live profile page. Optional `username` prop; falls back to the Clerk identity when configured.
 - `KarenLandingPage` - the marketing assembly.
-- `BadPromptGraveyard`, `KarenBadgeWall`, `KarenReplayTape`, `CourtroomDemo`, `DiffQuizShowcase`, `LiveLeaderboardShowcase`, `ProofProfileCard`, `DeleteOrDefend`, `GrandmaVoicePanel`, `KarenMascot`, `KarenLogo` - showcase components consumed by the landing and live pages.
+- `BadPromptGraveyard`, `KarenBadgeWall`, `CourtroomDemo`, `DiffQuizShowcase`, `LiveLeaderboardShowcase`, `ProofProfileCard`, `DeleteOrDefend`, `GrandmaVoicePanel`, `KarenMascot`, `KarenLogo`, and `landing/*` modules - showcase components consumed by the landing and live pages.
 
 Data sources:
 
@@ -65,7 +73,7 @@ graph TD
   LivePage -->|"useQuery(karen.profile)"| Convex
   LivePage -->|"SSE"| Routes["/api/promptcourt/runs/events"]
   LivePage -->|"POST /api/promptcourt/run"| Routes
-  Landing --> Showcases["BadPromptGraveyard / KarenBadgeWall / KarenReplayTape / LiveLeaderboardShowcase / CourtroomDemo / DiffQuizShowcase / DeleteOrDefend / GrandmaVoicePanel"]
+  Landing --> Showcases["BadPromptGraveyard / LiveLeaderboardShowcase / KarenShameTweetWall / DiffQuizShowcase / landing routes"]
   Showcases -->|"Convex queries when available"| Convex
   Showcases -.->|"static demo data when offline"| FallbackData["bundled demo records"]
 ```
@@ -79,7 +87,7 @@ graph TD
 - **Live state vs historical state.** Live run streams come from SSE; historical sessions and posts come from Convex queries. Never let historical state masquerade as live activity.
 - **Auth-optional rendering.** Every Clerk-bound feature must render gracefully when `isKarenAuthConfigured` is false. The landing page must work for an anonymous visitor.
 - **Public posts are pre-redacted.** Components must not attempt to re-derive prompts from posts; they only render `promptExcerpt` and `failureReasons`.
-- **Memoize heavy lists.** Leaderboard, graveyard, replay tape, and badge wall are render-fanout boundaries. Use stable item keys and avoid container-level subscriptions per the inherited performance rules.
+- **Memoize heavy lists.** Leaderboard, graveyard, and badge wall are render-fanout boundaries. Use stable item keys and avoid container-level subscriptions per the inherited performance rules.
 
 ## Change rules
 
