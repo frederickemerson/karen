@@ -12,7 +12,7 @@ export const KarenShameTweetWall: React.FC<{ className?: string }> = ({ classNam
     >
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <div className="font-mono text-xs uppercase tracking-[0.18em] text-[#6ee7ff]">mock x feed</div>
+          <div className="font-mono text-xs uppercase tracking-[0.18em] text-[#6ee7ff]">on X.com</div>
           <h3 className="mt-2 text-2xl font-semibold tracking-normal">Name and shame from @karen-code.</h3>
         </div>
         <div className="inline-flex items-center gap-2 rounded-sm border border-[#7bd88f]/30 bg-[#7bd88f]/10 px-2.5 py-1 font-mono text-xs text-[#b9f6c3]">

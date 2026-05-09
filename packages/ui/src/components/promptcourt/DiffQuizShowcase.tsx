@@ -1,6 +1,5 @@
 import React from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { playKarenEventAudio } from '@/lib/karenVoice';
 
 type QuizOption = {
   id: 'A' | 'B' | 'C' | 'D';
@@ -68,6 +67,46 @@ const codeLines = [
 
 const clampCountdown = (value: number) => Math.max(0, Math.min(7, value));
 
+const useKahootMusic = (enabled: boolean) => {
+  React.useEffect(() => {
+    if (!enabled || typeof window === 'undefined') return undefined;
+    const AudioCtor = window.AudioContext
+      || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioCtor) return undefined;
+
+    const context = new AudioCtor();
+    const master = context.createGain();
+    master.gain.value = 0.04;
+    master.connect(context.destination);
+
+    let index = 0;
+    // Fast bouncy Kahoot-ish loop in C major.
+    const notes = [392, 523.25, 659.25, 523.25, 440, 587.33, 698.46, 587.33, 392, 523.25, 783.99, 523.25];
+    const tick = () => {
+      const oscillator = context.createOscillator();
+      oscillator.type = 'square';
+      oscillator.frequency.value = notes[index % notes.length];
+      const env = context.createGain();
+      env.gain.setValueAtTime(0.0001, context.currentTime);
+      env.gain.exponentialRampToValueAtTime(0.6, context.currentTime + 0.02);
+      env.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.18);
+      oscillator.connect(env);
+      env.connect(master);
+      oscillator.start();
+      oscillator.stop(context.currentTime + 0.2);
+      index += 1;
+    };
+
+    void context.resume().then(tick).catch(() => {});
+    const interval = window.setInterval(tick, 240);
+
+    return () => {
+      window.clearInterval(interval);
+      void context.close().catch(() => {});
+    };
+  }, [enabled]);
+};
+
 export const DiffQuizShowcase: React.FC<{
   className?: string;
   rounds?: QuizRound[];
@@ -82,11 +121,12 @@ export const DiffQuizShowcase: React.FC<{
   const [score, setScore] = React.useState(0);
   const [streak, setStreak] = React.useState(2);
   const [skipTokens, setSkipTokens] = React.useState(0);
-  const [soundEnabled, setSoundEnabled] = React.useState(true);
+  const [soundEnabled, setSoundEnabled] = React.useState(false);
   const [selectedId, setSelectedId] = React.useState<QuizOption['id'] | null>(null);
   const [rollback, setRollback] = React.useState(false);
   const [celebrating, setCelebrating] = React.useState(false);
   const [skipMessage, setSkipMessage] = React.useState<string | null>(null);
+  useKahootMusic(soundEnabled);
 
   const activeRounds = roundsProp?.length ? roundsProp : rounds;
   const round = activeRounds[roundIndex % activeRounds.length];
@@ -105,7 +145,6 @@ export const DiffQuizShowcase: React.FC<{
             setCelebrating(true);
             return 0;
           }
-          if (soundEnabled) void playKarenEventAudio('quiz-fail');
           setSelectedId(null);
           setRollback(true);
           setStreak(0);
@@ -142,7 +181,6 @@ export const DiffQuizShowcase: React.FC<{
     if (isLocked) return;
     setSelectedId(option.id);
     if (option.correct) {
-      if (soundEnabled) void playKarenEventAudio('quiz-pass');
       setScore((value) => value + 250 + countdown * 10);
       setStreak((value) => {
         const next = value + 1;
@@ -160,7 +198,6 @@ export const DiffQuizShowcase: React.FC<{
         setCelebrating(true);
         return;
       }
-      if (soundEnabled) void playKarenEventAudio('quiz-fail');
       setRollback(true);
       setStreak(0);
     }
@@ -260,7 +297,7 @@ export const DiffQuizShowcase: React.FC<{
                   transition={{ duration: 0.45, repeat: Infinity, delay: bar * 0.06 }}
                 />
               ))}
-              <span className="ml-2 self-center font-mono text-xs text-[#c9bca8]">browser UI only</span>
+              <span className="ml-2 self-center font-mono text-xs text-[#c9bca8]">kahoot loop preview</span>
             </div>
           ) : (
             <div className="mt-4 font-mono text-xs text-[#c9bca8]">silent mode still judges you.</div>
