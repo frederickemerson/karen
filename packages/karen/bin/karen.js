@@ -1263,12 +1263,6 @@ const main = async () => {
     await runSetupWizard(rl);
   }
 
-  if (!initialPrompt && envEnabled('KAREN_LEGACY_SHELL', false) === false) {
-    rl.close();
-    await proxyOpencodeTuiIntercept([]);
-    return;
-  }
-
   const handlePrompt = async (prompt) => {
     maybeScreamAtLongPrompt(prompt);
     const evaluation = evaluatePrompt(prompt);
