@@ -93,9 +93,11 @@ export const KarenMascot: React.FC<{ className?: string; mood?: 'calm' | 'mad' }
             fill={`url(#${hairId})`}
           />
 
-          <ellipse cx="119" cy="148" rx="18" ry="23" fill="#fff9ef" />
-          <ellipse cx="201" cy="148" rx="18" ry="23" fill="#fff9ef" />
-          <path d="M101 149h37M182 149h37M138 148h44M101 148H78M219 148h23" stroke="#16110e" strokeWidth="7" strokeLinecap="round" />
+          <ellipse cx="119" cy="148" rx="23" ry="25" fill="#fff9ef" />
+          <ellipse cx="201" cy="148" rx="23" ry="25" fill="#fff9ef" />
+          <ellipse cx="119" cy="148" rx="24" ry="25" fill="none" stroke="#16110e" strokeWidth="6" />
+          <ellipse cx="201" cy="148" rx="24" ry="25" fill="none" stroke="#16110e" strokeWidth="6" />
+          <path d="M143 146c10-5 24-5 34 0M95 146H78M225 146h19" stroke="#16110e" strokeWidth="6" strokeLinecap="round" />
           <circle cx="123" cy="151" r="5" fill="#221611" />
           <circle cx="197" cy="151" r="5" fill="#221611" />
           <path
