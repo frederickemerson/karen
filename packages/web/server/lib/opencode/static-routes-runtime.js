@@ -51,7 +51,7 @@ export const createStaticRoutesRuntime = (dependencies) => {
     app.get(/^(?!\/api|.*\.(js|css|svg|png|jpg|jpeg|gif|ico|woff|woff2|ttf|eot|map)).*$/, (_req, res) => {
       const indexPath = path.join(distPath, 'index.html');
       if (fs.existsSync(indexPath)) {
-        res.sendFile(indexPath);
+        res.type('html').send(fs.readFileSync(indexPath));
         return;
       }
       res.status(503).send('Static files not found. Please build the application first.');
