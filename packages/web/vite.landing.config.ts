@@ -59,6 +59,10 @@ export default defineConfig({
     'process.env': {},
     global: 'globalThis',
   },
+  server: {
+    port: 5174,
+    open: '/landing.html',
+  },
   build: {
     outDir: path.resolve(__dirname, '../../landing-dist'),
     emptyOutDir: true,

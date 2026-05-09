@@ -8,17 +8,22 @@ import {
 } from '@remixicon/react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { buildCommitReadQuiz } from '@/lib/gitApi';
 
 type QuizQuestion = {
   prompt: string;
   options: string[];
   correctIndex: number;
+  evidence?: string;
+  why?: string;
 };
 
 type CodeReadQuizModalProps = {
   open: boolean;
   files: string[];
   commitMessage: string;
+  /** Repo root / project path for PromptCourt `buildQuiz` (AST + AI). */
+  workspaceDirectory: string | null;
   diffText: string;
   loadingDiff: boolean;
   diffError: string | null;
@@ -146,6 +151,7 @@ export const CodeReadQuizModal: React.FC<CodeReadQuizModalProps> = ({
   open,
   files,
   commitMessage,
+  workspaceDirectory,
   diffText,
   loadingDiff,
   diffError,
@@ -157,7 +163,15 @@ export const CodeReadQuizModal: React.FC<CodeReadQuizModalProps> = ({
   const [selected, setSelected] = React.useState<number | null>(null);
   const [wrongAnswer, setWrongAnswer] = React.useState(false);
   const [musicEnabled, setMusicEnabled] = React.useState(true);
-  const questions = React.useMemo(() => buildQuestions(files, commitMessage, diffText), [commitMessage, diffText, files]);
+  const [loadingQuiz, setLoadingQuiz] = React.useState(false);
+  const [quizSourceLabel, setQuizSourceLabel] = React.useState<string>('local-heuristic');
+  const [serverQuestions, setServerQuestions] = React.useState<QuizQuestion[] | null>(null);
+
+  const fallbackQuestions = React.useMemo(
+    () => buildQuestions(files, commitMessage, diffText),
+    [commitMessage, diffText, files],
+  );
+  const questions = serverQuestions && serverQuestions.length > 0 ? serverQuestions : fallbackQuestions;
   const question = questions[questionIndex];
 
   useKahootLoop(open && started && musicEnabled && !wrongAnswer);
@@ -168,8 +182,63 @@ export const CodeReadQuizModal: React.FC<CodeReadQuizModalProps> = ({
       setQuestionIndex(0);
       setSelected(null);
       setWrongAnswer(false);
+      setServerQuestions(null);
+      setQuizSourceLabel('local-heuristic');
+      setLoadingQuiz(false);
     }
   }, [open]);
+
+  React.useEffect(() => {
+    if (!open || loadingDiff || diffError || !diffText.trim()) {
+      if (!open || diffError) setLoadingQuiz(false);
+      return;
+    }
+    if (!workspaceDirectory) {
+      setServerQuestions(null);
+      setQuizSourceLabel('local-heuristic (no project path)');
+      setLoadingQuiz(false);
+      return;
+    }
+
+    let cancelled = false;
+    setLoadingQuiz(true);
+    setServerQuestions(null);
+
+    const promptPayload = [
+      'Git commit read-check — prove the author read the staged diff.',
+      `Commit message: ${commitMessage.trim() || '(empty)'}`,
+      `Files: ${files.join(', ')}`,
+    ].join('\n');
+
+    void (async () => {
+      try {
+        const built = await buildCommitReadQuiz(workspaceDirectory, {
+          prompt: promptPayload,
+          generatedDiff: diffText,
+        });
+        if (cancelled) return;
+        const mapped: QuizQuestion[] = built.questions.map((entry) => ({
+          prompt: entry.prompt,
+          options: entry.options,
+          correctIndex: entry.answer,
+          evidence: entry.evidence || undefined,
+          why: entry.why || undefined,
+        }));
+        setServerQuestions(mapped.length > 0 ? mapped : null);
+        setQuizSourceLabel(built.source || 'unknown');
+      } catch {
+        if (cancelled) return;
+        setServerQuestions(null);
+        setQuizSourceLabel('local-heuristic (server fallback)');
+      } finally {
+        if (!cancelled) setLoadingQuiz(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open, workspaceDirectory, loadingDiff, diffError, diffText, commitMessage, files]);
 
   if (!open) return null;
 
@@ -263,10 +332,15 @@ export const CodeReadQuizModal: React.FC<CodeReadQuizModalProps> = ({
                   <p className="mt-3 typography-body text-muted-foreground">
                     The commit button is not a vibe check. Read the diff, answer the round, then Git gets the commit.
                   </p>
+                  <p className="mt-4 font-mono text-[11px] text-muted-foreground">
+                    {loadingQuiz
+                      ? 'Generating read-check questions (PromptCourt AI + parser)...'
+                      : `Quiz source: ${quizSourceLabel}`}
+                  </p>
                   <Button
                     type="button"
                     className="mt-6"
-                    disabled={loadingDiff}
+                    disabled={loadingDiff || loadingQuiz || questions.length === 0}
                     onClick={() => setStarted(true)}
                   >
                     Start quiz
@@ -283,6 +357,14 @@ export const CodeReadQuizModal: React.FC<CodeReadQuizModalProps> = ({
                     </span>
                   </div>
                   <h2 className="mt-6 text-3xl font-semibold tracking-normal text-foreground">{question.prompt}</h2>
+                  {question.evidence ? (
+                    <p className="mt-2 rounded-md border border-border bg-muted/40 px-3 py-2 font-mono text-xs text-muted-foreground">
+                      Evidence: {question.evidence}
+                    </p>
+                  ) : null}
+                  {question.why ? (
+                    <p className="mt-2 typography-body text-sm text-muted-foreground">Why it matters: {question.why}</p>
+                  ) : null}
                   <div className="mt-6 grid flex-1 auto-rows-fr gap-3">
                     {question.options.map((option, index) => {
                       const isSelected = selected === index;

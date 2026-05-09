@@ -42,7 +42,7 @@ Public CLI surface:
 - `karen --help` / `-h` - prints usage and the command list.
 - `karen --version` / `-v` - prints the package version from [`package.json`](package.json).
 
-Inside the shell, slash commands include `/help`, `/setup`, `/gui`, `/tui`, `/tui-raw`, `/run`, `/providers`, `/models`, `/auth`, `/mcp`, `/agent`, `/session`, `/stats`, `/audio`, `/feed`, `/profile`, `/diff`, `/opencode ...`, and `/quit`. The full list is enumerated in `printHelp` and `printOpenCodeCommands` in [`bin/karen.js`](bin/karen.js).
+Inside the shell, slash commands include `/help`, `/setup`, `/gui`, `/tui`, `/tui-raw`, `/run`, `/providers`, `/models`, `/auth`, `/mcp`, `/agent`, `/session`, `/stats`, `/audio`, `/feed`, `/profile`, `/diff`, `/opencode ...`, and `/quit`. The full list is enumerated in `printHelp` and `printOpenCodeCommands` in [`bin/karen.js`](bin/karen.js). The `/gui` command starts the OpenChamber web UI on `OPENCHAMBER_PORT` and prints the **editor** URL (`/` by default, overridable via `KAREN_GUI_PATH`); it also prints `/karen` for the PromptCourt-only scoreboard route ([`packages/ui/src/App.tsx`](../ui/src/App.tsx) maps `/karen` to `PromptCourtPage`, not `MainLayout`).
 
 Local module imports inside [`bin/karen.js`](bin/karen.js):
 

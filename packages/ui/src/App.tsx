@@ -49,6 +49,7 @@ import { useI18n } from '@/lib/i18n';
 import { applyMobileKeyboardMode } from '@/lib/mobileKeyboardMode';
 import { SyncAppEffects } from '@/apps/AppEffects';
 import { useAppFontEffects } from '@/apps/useAppFontEffects';
+import { BrowserRouter } from 'react-router-dom';
 import { PromptCourtPage } from '@/components/promptcourt/PromptCourtPage';
 import { KarenLandingPage } from '@/components/promptcourt/KarenLandingPage';
 
@@ -835,7 +836,9 @@ function App({ apis }: AppProps) {
   if (isKarenLanding) {
     return (
       <ErrorBoundary>
-        <KarenLandingPage />
+        <BrowserRouter>
+          <KarenLandingPage />
+        </BrowserRouter>
       </ErrorBoundary>
     );
   }
@@ -851,7 +854,9 @@ function App({ apis }: AppProps) {
   if (KAREN_PUBLIC_ONLY) {
     return (
       <ErrorBoundary>
-        <KarenLandingPage />
+        <BrowserRouter>
+          <KarenLandingPage />
+        </BrowserRouter>
       </ErrorBoundary>
     );
   }

@@ -954,3 +954,30 @@ export async function canonicalizeWorktreeState(
   }
   return response.json();
 }
+
+export type CommitReadQuizHttpQuestion = {
+  prompt: string;
+  options: string[];
+  answer: number;
+  evidence: string;
+  why: string;
+  source: string;
+};
+
+/** Uses PromptCourt `buildQuiz` on the server (OpenAI when configured, else parser fallback). */
+export async function buildCommitReadQuiz(
+  directory: string,
+  payload: { prompt: string; generatedDiff: string },
+): Promise<{ source: string; questions: CommitReadQuizHttpQuestion[] }> {
+  const url = buildUrl(`${API_BASE}/commit-read-quiz`, directory);
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '');
+    throw new Error(detail || `commit-read-quiz failed: ${response.status}`);
+  }
+  return response.json();
+}

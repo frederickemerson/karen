@@ -387,17 +387,22 @@ const isPortOpen = (port, host = '127.0.0.1') => new Promise((resolve) => {
 
 const openKarenGui = async () => {
   const port = Number(process.env.OPENCHAMBER_PORT || 3002);
-  const url = `http://127.0.0.1:${port}/karen`;
+  // Root path loads MainLayout (chat + git editor). `/karen` is PromptCourt-only (scoreboard) — see packages/ui/src/App.tsx.
+  const guiPath = String(process.env.KAREN_GUI_PATH || '/').trim() || '/';
+  const url = `http://127.0.0.1:${port}${guiPath.startsWith('/') ? guiPath : `/${guiPath}`}`;
+  const scoreboardUrl = `http://127.0.0.1:${port}/karen`;
   const projectDirectory = ensureGuiProjectDirectory(process.cwd());
   if (await isPortOpen(port)) {
-    line(color(`Karen GUI is already running: ${url}`, 'green'));
+    line(color(`OpenChamber GUI is already running: ${url}`, 'green'));
+    line(color(`PromptCourt scoreboard: ${scoreboardUrl}`, 'gray'));
     if (projectDirectory) {
       line(color(`Project folder set to ${projectDirectory}. Refresh the GUI if it was already open.`, 'gray'));
     }
     return;
   }
 
-  line(color(`Starting Karen GUI at ${url}`, 'cyan'));
+  line(color(`Starting OpenChamber GUI at ${url}`, 'cyan'));
+  line(color(`PromptCourt scoreboard: ${scoreboardUrl}`, 'gray'));
   if (projectDirectory) {
     line(color(`Project folder: ${projectDirectory}`, 'gray'));
   }
@@ -1153,7 +1158,7 @@ const printAudioStatus = () => {
 
 const printHelp = () => {
   line(color('Karen commands', 'pink'));
-  line('  /gui             start/open the Karen web GUI');
+  line('  /gui             start/open OpenChamber web UI (editor); scoreboard lives at /karen');
   line('  /setup           guided OpenCode provider/model setup');
   line('  /commands        list OpenCode commands Karen can proxy');
   line('  /tui [project]   guarded OpenCode TUI; Karen blocks weak entered prompts');

@@ -943,4 +943,46 @@ export function registerGitRoutes(app) {
     }
   });
 
+  /**
+   * Shared PromptCourt quiz builder (AI + parser fallback) for the Git panel
+   * “Karen commit trial” modal — same engine as CLI / PromptCourt GUI.
+   */
+  app.post('/api/git/commit-read-quiz', async (req, res) => {
+    try {
+      const directory = req.query.directory;
+      if (!directory) {
+        return res.status(400).json({ error: 'directory parameter is required' });
+      }
+      const { prompt, generatedDiff } = req.body || {};
+      if (typeof generatedDiff !== 'string') {
+        return res.status(400).json({ error: 'generatedDiff is required' });
+      }
+      const { buildQuiz } = await import('../promptcourt/quiz.js');
+      const promptText = typeof prompt === 'string' && prompt.trim().length > 0
+        ? prompt.trim()
+        : 'Commit read-check';
+      const built = await buildQuiz({
+        prompt: promptText,
+        generatedDiff,
+        cwd: directory,
+        onAiFallback: () => {},
+      });
+      const questions = built.questions.map((question) => ({
+        prompt: question.prompt,
+        options: question.options,
+        answer: question.answer,
+        evidence: typeof question.evidence === 'string' ? question.evidence : '',
+        why: typeof question.why === 'string' ? question.why : '',
+        source: question.source || 'unknown',
+      }));
+      res.json({
+        source: built.source,
+        questions,
+      });
+    } catch (error) {
+      console.error('Failed to build commit read quiz:', error);
+      res.status(500).json({ error: error.message || 'Failed to build commit read quiz' });
+    }
+  });
+
 }

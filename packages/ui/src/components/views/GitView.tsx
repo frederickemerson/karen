@@ -1078,12 +1078,21 @@ export const GitView: React.FC = () => {
 
     try {
       const diffChunks = await Promise.all(filesToCommit.map(async (filePath) => {
-        const response = await git.getGitDiff(currentDirectory, {
+        const stagedResponse = await git.getGitDiff(currentDirectory, {
           path: filePath,
-          staged: false,
+          staged: true,
           contextLines: 80,
         });
-        return `# ${filePath}\n${response.diff || 'No textual diff available.'}`;
+        let body = (stagedResponse.diff && stagedResponse.diff.trim()) ? stagedResponse.diff : '';
+        if (!body) {
+          const unstagedResponse = await git.getGitDiff(currentDirectory, {
+            path: filePath,
+            staged: false,
+            contextLines: 80,
+          });
+          body = (unstagedResponse.diff && unstagedResponse.diff.trim()) ? unstagedResponse.diff : '';
+        }
+        return `# ${filePath}\n${body || 'No textual diff available.'}`;
       }));
       setCommitReadCheck((current) => current
         ? {
@@ -2237,6 +2246,7 @@ export const GitView: React.FC = () => {
         open={commitReadCheck?.open === true}
         files={commitReadCheck?.files ?? []}
         commitMessage={commitMessage}
+        workspaceDirectory={currentDirectory ?? null}
         diffText={commitReadCheck?.diffText ?? ''}
         loadingDiff={commitReadCheck?.loadingDiff === true}
         diffError={commitReadCheck?.diffError ?? null}

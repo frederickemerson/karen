@@ -519,6 +519,14 @@ export async function createGitCommit(
   return gitHttp.createGitCommit(directory, message, options);
 }
 
+/** PromptCourt-backed commit-read quiz (OpenAI + parser fallback). Server-only HTTP route. */
+export async function buildCommitReadQuiz(
+  directory: string,
+  payload: { prompt: string; generatedDiff: string },
+): Promise<{ source: string; questions: import('./gitApiHttp').CommitReadQuizHttpQuestion[] }> {
+  return gitHttp.buildCommitReadQuiz(directory, payload);
+}
+
 export async function gitPush(
   directory: string,
   options: { remote?: string; branch?: string; options?: string[] | Record<string, unknown> } = {}
