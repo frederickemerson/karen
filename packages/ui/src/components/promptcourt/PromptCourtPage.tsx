@@ -416,7 +416,7 @@ type GuiRun = {
   changedFiles?: string[];
   result?:
     | { passed: boolean; completedAt: number; wrongQuestionId?: string | null }
-    | { status: 'approved'; intent: 'conversational' | 'exploration'; message: string }
+    | { status: 'approved'; intent: 'conversational' | 'exploration' | 'no_changes'; message: string }
     | null;
   prompt?: string;
   error?: string | null;

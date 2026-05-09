@@ -49,8 +49,9 @@ Public exports:
 
 GUI prompt behavior:
 
-- The main chat composer queues non-slash normal-mode prompts through `/api/promptcourt/gui-runs` by default, then redirects to `/karen?run=<id>` so the guarded-run stream and quiz modal are the default GUI experience.
-- Slash commands remain OpenCode commands; the guarded-run handoff must not swallow `/` command autocomplete or execution.
+- Normal chat composer prompts still go to OpenCode after PromptCourt judgment; the dashboard guarded-run endpoint is only for explicit browser guarded-run demos.
+- Commit/read-check UI must be backed by a real git diff. If the server cannot produce one, it should surface a failure state rather than opening a quiz from fixture/sample changes.
+- Slash commands remain OpenCode commands; PromptCourt must not swallow `/` command autocomplete or execution.
 
 Data sources:
 

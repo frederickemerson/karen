@@ -44,7 +44,7 @@
     "dev:web:server": "bun run --cwd packages/web dev:server:watch",
     "dev:web:full": "node ./scripts/dev-web-full.mjs",
     "dev:web:hmr": "node ./scripts/dev-web-hmr.mjs",
-    "karen": "bun run --cwd packages/karen start",
+    "karen": "node packages/karen/bin/karen.js",
     "install:karen": "node ./scripts/install-karen.mjs install",
     "uninstall:karen": "node ./scripts/install-karen.mjs uninstall",
     "status:karen": "node ./scripts/install-karen.mjs status",

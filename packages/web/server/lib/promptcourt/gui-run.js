@@ -1,7 +1,6 @@
 import { evaluatePrompt, extractPromptText } from './evaluator.js';
 import { redactPublicText } from './privacy.js';
 import { buildQuiz } from './quiz.js';
-import { synthesizeGuiDiff } from './diff-synthesizer.js';
 
 const GUI_RUN_LIMIT = 100;
 const GUI_RUN_EVENT_LIMIT = 50;
@@ -228,9 +227,34 @@ export const createGuiRunRuntime = ({
         return;
       }
 
-      const synthesized = runnerOutput?.diff
-        ? { diff: runnerOutput.diff, source: runnerOutput.diffSource || 'runner', note: runnerOutput.diffNote || null }
-        : await synthesizeGuiDiff({ prompt: run.prompt });
+      if (typeof runner !== 'function') {
+        throw new Error('No GUI runner is configured. Karen will not open a quiz until OpenCode has produced a real diff.');
+      }
+
+      if (typeof runnerOutput?.diff !== 'string') {
+        throw new Error('The GUI runner did not return a real diff. Karen will not open a quiz for an unexecuted run.');
+      }
+
+      if (!runnerOutput.diff.trim()) {
+        run.diff = '';
+        run.diffSource = runnerOutput.diffSource || 'runner';
+        run.diffNote = runnerOutput.diffNote || 'OpenCode finished without producing a diff.';
+        run.changedFiles = [];
+        run.quiz = null;
+        run.result = {
+          status: 'approved',
+          intent: 'no_changes',
+          message: 'OpenCode finished without a diff — no quiz required.',
+        };
+        emit(run, 'completed', 'OpenCode finished without a diff.', run.result.message);
+        return;
+      }
+
+      const synthesized = {
+        diff: runnerOutput.diff,
+        source: runnerOutput.diffSource || 'runner',
+        note: runnerOutput.diffNote || null,
+      };
 
       run.diff = synthesized.diff;
       run.diffSource = synthesized.source;

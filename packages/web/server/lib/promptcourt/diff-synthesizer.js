@@ -11,52 +11,6 @@ const truncate = (value, maxLength) => {
   return `${text.slice(0, maxLength)}\n...[truncated]`;
 };
 
-const FIXTURE_DIFF = `diff --git a/packages/web/server/lib/auth/session.js b/packages/web/server/lib/auth/session.js
-index 1111111..2222222 100644
---- a/packages/web/server/lib/auth/session.js
-+++ b/packages/web/server/lib/auth/session.js
-@@ -12,9 +12,18 @@ export const createSession = (user) => {
-   const id = randomUUID();
--  const expiresAt = Date.now() + 1000 * 60 * 60;
-+  const expiresAt = Date.now() + 1000 * 60 * 60 * 24;
-   return {
-     id,
-     userId: user.id,
-+    email: user.email,
-     expiresAt,
-   };
- };
-+
-+export const refreshSession = (session) => {
-+  if (!session || session.expiresAt < Date.now()) return null;
-+  return {
-+    ...session,
-+    expiresAt: Date.now() + 1000 * 60 * 60 * 24,
-+  };
-+};
-diff --git a/packages/web/server/lib/auth/session.test.js b/packages/web/server/lib/auth/session.test.js
-index 3333333..4444444 100644
---- a/packages/web/server/lib/auth/session.test.js
-+++ b/packages/web/server/lib/auth/session.test.js
-@@ -1,4 +1,5 @@
- import { describe, expect, it } from 'vitest';
--import { createSession } from './session.js';
-+import { createSession, refreshSession } from './session.js';
-
-@@ -10,4 +11,11 @@ describe('createSession', () => {
-     expect(session.userId).toBe('u_1');
-   });
-+
-+  it('refreshSession extends expiry by 24 hours', () => {
-+    const session = createSession({ id: 'u_1', email: 'a@b.com' });
-+    const refreshed = refreshSession(session);
-+    expect(refreshed.expiresAt).toBeGreaterThan(session.expiresAt);
-+  });
- });
-`;
-
-const FIXTURE_NOTE = 'Karen could not call the model. Showing a sample diff so the quiz still runs.';
-
 const SYSTEM_PROMPT = [
   'You are Karen, simulating what a strong coding agent would generate for a single small task.',
   'Output ONLY a valid unified git diff (no prose, no markdown fences, no commentary).',
@@ -113,7 +67,8 @@ const looksLikeDiff = (value) => /(^|\n)diff --git /.test(String(value || ''));
 /**
  * Generate a plausible unified diff from a user prompt for the GUI quiz flow.
  * Uses the same OpenAI Responses endpoint and env knobs as the quiz builder.
- * Falls back to a static fixture diff when the model is unavailable.
+ * Throws when a real diff cannot be produced. The GUI must not quiz users on
+ * fixture/sample diffs that were not generated from the requested change.
  *
  * @param {object} options
  * @param {string} options.prompt
@@ -123,11 +78,11 @@ const looksLikeDiff = (value) => /(^|\n)diff --git /.test(String(value || ''));
 export const synthesizeGuiDiff = async ({ prompt, fetchImpl = fetch } = {}) => {
   const cleanPrompt = String(prompt || '').trim();
   if (!cleanPrompt) {
-    return { diff: FIXTURE_DIFF, source: 'fixture', note: 'No prompt was provided.' };
+    throw new Error('Cannot build a quiz without a prompt or a real generated diff.');
   }
 
   if (!quizAiAllowed()) {
-    return { diff: FIXTURE_DIFF, source: 'fixture', note: FIXTURE_NOTE };
+    throw new Error('Cannot build a GUI quiz without a real diff. Configure OPENAI_API_KEY/KAREN_QUIZ_AI for diff synthesis, or run Karen through the terminal guarded flow so the quiz uses the actual worktree diff.');
   }
 
   const apiKey = getOpenAiApiKey();
@@ -166,19 +121,13 @@ export const synthesizeGuiDiff = async ({ prompt, fetchImpl = fetch } = {}) => {
       source: `ai:${quizModel()}`,
     };
   } catch (error) {
-    return {
-      diff: FIXTURE_DIFF,
-      source: 'fixture',
-      note: error instanceof Error ? error.message : 'Unknown synthesis error.',
-    };
+    throw new Error(error instanceof Error ? error.message : 'GUI diff synthesis failed.');
   } finally {
     clearTimeout(timeout);
   }
 };
 
 export const __test = {
-  FIXTURE_DIFF,
-  FIXTURE_NOTE,
   stripCodeFences,
   looksLikeDiff,
   extractResponseText,

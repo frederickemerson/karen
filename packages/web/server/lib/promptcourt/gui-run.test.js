@@ -22,6 +22,25 @@ const approvedPrompt = `
   Constraints: do not change unrelated OpenCode provider, auth, or terminal behavior.
 `;
 
+const approvedDiff = [
+  'diff --git a/packages/web/server/lib/promptcourt/gui-run.js b/packages/web/server/lib/promptcourt/gui-run.js',
+  'index 1111111..2222222 100644',
+  '--- a/packages/web/server/lib/promptcourt/gui-run.js',
+  '+++ b/packages/web/server/lib/promptcourt/gui-run.js',
+  '@@ -10,6 +10,7 @@ export const createGuiRunRuntime = () => {',
+  '   const runs = new Map();',
+  '+  const guardedMode = true;',
+  '   return {',
+  '     createRun() {}',
+  '   };',
+].join('\n');
+
+const approvedRunner = () => ({
+  diff: approvedDiff,
+  diffSource: 'runner',
+  changedFiles: ['packages/web/server/lib/promptcourt/gui-run.js'],
+});
+
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -33,6 +52,7 @@ describe('promptcourt GUI run runtime', () => {
     const store = createStore();
     const runtime = createGuiRunRuntime({
       store,
+      runner: approvedRunner,
       schedule: (fn) => queueMicrotask(fn),
     });
 
@@ -52,7 +72,7 @@ describe('promptcourt GUI run runtime', () => {
       store,
       runner: ({ run }) => {
         seen.push(run.status);
-        return { changedFiles: ['packages/web/server/lib/promptcourt/gui-run.js'] };
+        return approvedRunner();
       },
       schedule: (fn) => queueMicrotask(fn),
     });
@@ -82,10 +102,32 @@ describe('promptcourt GUI run runtime', () => {
     expect(store.getRunEvents({ username: 'GUI Tester' }).map((event) => event.status)).toContain('quiz_required');
   });
 
+  it('refuses to quiz implementation prompts when no GUI runner is configured', async () => {
+    const store = createStore();
+    const runtime = createGuiRunRuntime({
+      store,
+      schedule: (fn) => queueMicrotask(fn),
+    });
+
+    const queued = runtime.createRun({ username: 'GUI Tester', prompt: approvedPrompt });
+    const finished = await runtime.waitForRunStatus(queued.id, 'failed', 1000);
+
+    expect(finished.status).toBe('failed');
+    expect(finished.quiz).toBeNull();
+    expect(finished.diff).toBeNull();
+    expect(finished.error).toContain('No GUI runner is configured');
+    const statuses = runtime.getRunEvents(queued.id).map((event) => event.status);
+    expect(statuses).toContain('running');
+    expect(statuses).toContain('failed');
+    expect(statuses).not.toContain('building_quiz');
+    expect(statuses).not.toContain('quiz_required');
+  });
+
   it('grades a wrong answer and rolls the run back', async () => {
     const store = createStore();
     const runtime = createGuiRunRuntime({
       store,
+      runner: approvedRunner,
       schedule: (fn) => queueMicrotask(fn),
     });
 
@@ -112,6 +154,7 @@ describe('promptcourt GUI run runtime', () => {
     const store = createStore();
     const runtime = createGuiRunRuntime({
       store,
+      runner: approvedRunner,
       schedule: (fn) => queueMicrotask(fn),
     });
 
@@ -149,6 +192,7 @@ describe('promptcourt GUI run runtime', () => {
     const store = createStore();
     const runtime = createGuiRunRuntime({
       store,
+      runner: approvedRunner,
       schedule: (fn) => queueMicrotask(fn),
     });
 

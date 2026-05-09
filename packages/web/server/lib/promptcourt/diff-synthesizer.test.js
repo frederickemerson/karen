@@ -16,20 +16,17 @@ describe('promptcourt diff synthesizer', () => {
     process.env.KAREN_QUIZ_AI = originalAi ?? '';
   });
 
-  it('returns the fixture diff when AI is not configured', async () => {
-    const result = await synthesizeGuiDiff({ prompt: 'Add a refresh helper to the auth session module.' });
-    expect(result.source).toBe('fixture');
-    expect(result.diff).toContain('diff --git');
-    expect(result.note).toBeDefined();
+  it('refuses to invent a fixture diff when AI is not configured', async () => {
+    await expect(synthesizeGuiDiff({ prompt: 'Add a refresh helper to the auth session module.' }))
+      .rejects.toThrow('Cannot build a GUI quiz without a real diff');
   });
 
-  it('returns the fixture diff for empty prompts', async () => {
-    const result = await synthesizeGuiDiff({ prompt: '   ' });
-    expect(result.source).toBe('fixture');
-    expect(result.note).toContain('No prompt');
+  it('refuses empty prompts', async () => {
+    await expect(synthesizeGuiDiff({ prompt: '   ' }))
+      .rejects.toThrow('Cannot build a quiz without a prompt');
   });
 
-  it('uses the fixture when the model returns non-diff content', async () => {
+  it('fails when the model returns non-diff content', async () => {
     process.env.OPENAI_API_KEY = 'sk-test';
     process.env.KAREN_QUIZ_AI = '1';
 
@@ -39,9 +36,8 @@ describe('promptcourt diff synthesizer', () => {
       text: async () => '',
     });
 
-    const result = await synthesizeGuiDiff({ prompt: 'Refactor login.', fetchImpl: fakeFetch });
-    expect(result.source).toBe('fixture');
-    expect(result.note).toContain('did not return');
+    await expect(synthesizeGuiDiff({ prompt: 'Refactor login.', fetchImpl: fakeFetch }))
+      .rejects.toThrow('did not return');
   });
 
   it('returns the model diff when the response is a unified diff', async () => {

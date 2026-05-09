@@ -11,7 +11,7 @@
     "typescript": "~5.8.3"
   },
   "scripts": {
-    "start": "bun bin/karen.js",
+    "start": "node bin/karen.js",
     "install-local": "node ../../scripts/install-karen.mjs install",
     "uninstall-local": "node ../../scripts/install-karen.mjs uninstall",
     "status-local": "node ../../scripts/install-karen.mjs status",
