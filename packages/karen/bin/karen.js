@@ -1254,8 +1254,6 @@ const main = async () => {
 
 export const __karenTest = {
   analyzeDiffImpact,
-  buildAiQuiz,
-  buildParserQuiz,
   buildQuiz,
   classifyTuiContext,
   parseDiff,
