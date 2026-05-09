@@ -82,7 +82,8 @@ Defined and primarily owned by inherited OpenChamber surfaces. Karen reads them.
 | `OPENCHAMBER_OPENCODE_PATH` | unset | Inherited fallback. |
 | `OPENCHAMBER_OPENCODE_BIN` | unset | Inherited fallback. |
 | `OPENCODE_CONFIG` | unset | Override for the OpenCode config file Karen reads to learn provider/model. |
-| `OPENCHAMBER_PORT` | `3002` | Port Karen GUI lives on (`/karen` route). |
+| `OPENCHAMBER_PORT` | `3002` | Port for the local OpenChamber web server. |
+| `KAREN_GUI_PATH` | `/` | Path `/gui` prints and opens (OpenChamber editor shell). Use `/karen` if you only want the PromptCourt scoreboard page. |
 | `XDG_CONFIG_HOME` | `~/.config` | Base for `openchamber/` settings, audio cache, and PromptCourt local store. |
 | `OPENAI_API_KEY` | unset | Powers `KAREN_QUIZ_AI` when set. |
 | `ELEVENLABS_API_KEY` | unset | Powers ElevenLabs TTS when set; Karen redacts it from logs. |
