@@ -70,6 +70,7 @@
     "vscode:package": "bun run --cwd packages/vscode package",
     "vscode:type-check": "bun run --cwd packages/vscode type-check",
     "docs:validate": "node scripts/docs/validate-docs.mjs",
+    "docs:validate:karen": "node scripts/docs/validate-karen-docs.mjs",
     "icons:sprite": "node scripts/generate-file-type-sprite.mjs",
     "themes:port:opencode": "tsx scripts/port-opencode-theme.ts",
     "version:bump": "node scripts/bump-version.mjs",
