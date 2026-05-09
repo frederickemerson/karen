@@ -108,6 +108,43 @@ describe('promptcourt GUI run runtime', () => {
     expect(store.getRunEvents({ username: 'GUI Tester' }).map((event) => event.status)).toContain('rollback');
   });
 
+  it('skips the quiz for conversational greetings and completes the run cleanly', async () => {
+    const store = createStore();
+    const runtime = createGuiRunRuntime({
+      store,
+      schedule: (fn) => queueMicrotask(fn),
+    });
+
+    const queued = runtime.createRun({ username: 'GUI Tester', prompt: 'hi karen' });
+    const finished = await runtime.waitForRunStatus(queued.id, 'completed', 1000);
+
+    expect(finished.status).toBe('completed');
+    expect(finished.quiz).toBeNull();
+    expect(finished.diff).toBe('');
+    expect(finished.changedFiles).toEqual([]);
+    expect(finished.result).toMatchObject({ status: 'approved', intent: 'conversational' });
+    const statuses = runtime.getRunEvents(queued.id).map((event) => event.status);
+    expect(statuses).toContain('running');
+    expect(statuses).toContain('completed');
+    expect(statuses).not.toContain('building_quiz');
+    expect(statuses).not.toContain('quiz_required');
+  });
+
+  it('skips the quiz for read-only exploration prompts', async () => {
+    const store = createStore();
+    const runtime = createGuiRunRuntime({
+      store,
+      schedule: (fn) => queueMicrotask(fn),
+    });
+
+    const queued = runtime.createRun({ username: 'GUI Tester', prompt: 'explore the codebase' });
+    const finished = await runtime.waitForRunStatus(queued.id, 'completed', 1000);
+
+    expect(finished.status).toBe('completed');
+    expect(finished.quiz).toBeNull();
+    expect(finished.result).toMatchObject({ status: 'approved', intent: 'exploration' });
+  });
+
   it('grades all-correct answers and finalizes the quiz', async () => {
     const store = createStore();
     const runtime = createGuiRunRuntime({

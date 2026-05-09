@@ -209,14 +209,14 @@ const LaunchControls = ({ profile, onRun, runPrompt, onRunPromptChange, runStatu
 );
 
 const runEventTone = (status: string): 'good' | 'bad' | 'default' => {
-  if (status === 'quiz_required' || status === 'quiz_passed' || status === 'synced') return 'good';
+  if (status === 'quiz_required' || status === 'quiz_passed' || status === 'completed' || status === 'synced') return 'good';
   if (status === 'blocked' || status === 'rollback' || status === 'failed') return 'bad';
   return 'default';
 };
 
 const audioEventForRunStatus = (status: string): KarenAudioEvent | null => {
   if (status === 'blocked') return 'prompt-blocked';
-  if (status === 'quiz_required' || status === 'quiz_passed' || status === 'synced') return 'quiz-pass';
+  if (status === 'quiz_required' || status === 'quiz_passed' || status === 'completed' || status === 'synced') return 'quiz-pass';
   if (status === 'rollback') return 'rollback';
   if (status === 'failed') return 'quiz-fail';
   return null;
@@ -414,7 +414,10 @@ type GuiRun = {
   diffSource?: string | null;
   diffNote?: string | null;
   changedFiles?: string[];
-  result?: { passed: boolean; completedAt: number; wrongQuestionId?: string | null } | null;
+  result?:
+    | { passed: boolean; completedAt: number; wrongQuestionId?: string | null }
+    | { status: 'approved'; intent: 'conversational' | 'exploration'; message: string }
+    | null;
   prompt?: string;
   error?: string | null;
   createdAt: number;
@@ -547,6 +550,13 @@ const PromptCourtLayout: React.FC<{
         } else if (payload.run.status === 'failed') {
           setIsRunning(false);
           setRunStatus(payload.run.error || 'Karen GUI run failed.');
+        } else if (payload.run.status === 'completed') {
+          setIsRunning(false);
+          const completedResult = payload.run.result;
+          const completedMessage = completedResult && 'message' in completedResult
+            ? completedResult.message
+            : 'Karen approved — no quiz required.';
+          setRunStatus(completedMessage);
         } else {
           setRunStatus(payload.event.label);
         }

@@ -37,6 +37,54 @@ describe('promptcourt evaluator', () => {
     expect(result.reasons).not.toContain('No verification or test request');
   });
 
+  it('lets greetings through without quizzing', () => {
+    for (const greeting of ['hi', 'hello there', 'hey karen', 'good morning', 'thanks!', 'yo', 'sup']) {
+      const result = evaluatePrompt(greeting);
+      expect(result.allowed, `${greeting} should be allowed`).toBe(true);
+      expect(result.intent, `${greeting} intent`).toBe('conversational');
+      expect(result.reasons).toEqual([]);
+    }
+  });
+
+  it('lets read-only exploration prompts through without quizzing', () => {
+    const explorations = [
+      'explore the codebase',
+      'show me the auth flow',
+      'what does the session middleware do',
+      'how does the quiz pipeline work',
+      'tell me about the promptcourt store',
+      'walk me through the login flow',
+      'list the open routes',
+    ];
+    for (const prompt of explorations) {
+      const result = evaluatePrompt(prompt);
+      expect(result.allowed, `${prompt} should be allowed`).toBe(true);
+      expect(result.intent, `${prompt} intent`).toBe('exploration');
+      expect(result.reasons).toEqual([]);
+    }
+  });
+
+  it('still blocks lazy mutation prompts even when they sound short and casual', () => {
+    for (const prompt of ['fix it', 'optimize this', 'get it working', 'make it work', 'refactor the thing', 'just do it']) {
+      const result = evaluatePrompt(prompt);
+      expect(result.allowed, `${prompt} should be blocked`).toBe(false);
+      expect(result.verdict).toBe('blocked');
+      expect(result.intent).toBeNull();
+    }
+  });
+
+  it('falls back to the strict gate when chitchat is mixed with bare mutation intent', () => {
+    const result = evaluatePrompt('hi karen, fix it');
+    expect(result.intent).toBeNull();
+    expect(result.verdict).toBe('blocked');
+  });
+
+  it('lets the strict gate approve mutation prompts that include scope and context', () => {
+    const result = evaluatePrompt('hi karen, fix the login bug in packages/web/server/auth.ts');
+    expect(result.intent).toBeNull();
+    expect(result.verdict).toBe('approved');
+  });
+
   it('extracts only user-authored text parts from request bodies', () => {
     const body = {
       parts: [

@@ -106,6 +106,60 @@ const HOPELESS_PROMPTS = [
   /\bmake.*nice\b/i,
 ];
 
+// Greetings / pleasantries — no code change requested.
+const CONVERSATIONAL_PATTERNS = [
+  /^\s*(hi|hello|hey|yo|sup|howdy|hola|gm|gn|good\s+(morning|afternoon|evening|night))\b/i,
+  /^\s*(thanks?|thank\s+you|ty|thx|cheers|bye|goodbye|nice|cool|great|awesome|love\s+(it|this|that))\b/i,
+  /^\s*(how('s|\s+is)\s+it\s+going|how\s+are\s+you|what'?s\s+up|wassup)\b/i,
+  /^\s*(yes|no|maybe|sure|ok(ay)?|nope|yep|yeah|nah)\s*[.!?]?\s*$/i,
+];
+
+// Read-only / exploratory prompts — Karen does not need to gate these,
+// the agent can chat or explore the repo without producing a diff.
+const EXPLORATION_PATTERNS = [
+  /\b(explore|inspect|browse|tour|survey|review|audit|study|map\s+out|map\s+the|analy[sz]e|skim)\b.*\b(codebase|repo(sitory)?|project|module|files?|structure|tree|directory|folder|architecture|system|flow|design|layout)\b/i,
+  /\b(show|list|find|locate|search\s+for|grep|describe|explain|summari[sz]e|outline|tell\s+me\s+about|walk\s+me\s+through|teach\s+me|give\s+me\s+(an?\s+)?overview)\b/i,
+  /\b(what|where|how|why|when|which|who)\s+(is|are|does|do|did|was|were|happens?|should|would|could|can|will|am|i'?m)\b/i,
+  /\b(read|open|view|look\s+at|peek\s+at|check\s+out|take\s+a\s+look)\b\s+(the\s+)?(file|folder|directory|module|function|class|component|test|config|repo|codebase)\b/i,
+];
+
+// Imperative mutation verbs that require specifics. If any of these appear,
+// the prompt MUST go through the strict gate — even if the wrapper sounds
+// conversational ("hi can you fix the login bug" still gets graded).
+const MUTATION_VERBS = /\b(?:fix|debug|patch|repair|resolve|implement|introduce|generate|delete|prune|refactor|restructure|reorganize|rewrite|rename|migrate|port|optimi[sz]e|polish|improve|cleanup|clean\s+up|harden|finish|complete|ship|deploy|release|publish)\b/i;
+
+// Bare lazy directives that carry no information at all.
+const LAZY_DIRECTIVES = /\b(?:get\s+(?:it|this|things?|stuff)\s+working|make\s+(?:it|this|things?|stuff)\s+work|just\s+do\s+it|do\s+your\s+(?:thing|magic)|make\s+it\s+(?:better|nicer|cleaner|prettier))\b/i;
+
+const classifyIntent = (rawPrompt) => {
+  const prompt = typeof rawPrompt === 'string' ? rawPrompt.trim() : '';
+  if (!prompt) return null;
+  if (MUTATION_VERBS.test(prompt) || LAZY_DIRECTIVES.test(prompt)) return null;
+  const conversational = CONVERSATIONAL_PATTERNS.some((re) => re.test(prompt));
+  const exploration = EXPLORATION_PATTERNS.some((re) => re.test(prompt));
+  if (!conversational && !exploration) return null;
+  return exploration ? 'exploration' : 'conversational';
+};
+
+const intentApproval = (prompt, intent) => ({
+  score: 100,
+  verdict: 'approved',
+  allowed: true,
+  intent,
+  reasons: [],
+  dimensions: {
+    specificGoal: 20,
+    scopeBoundaries: 20,
+    acceptanceCriteria: 20,
+    context: 15,
+    verification: 15,
+    riskAwareness: 10,
+  },
+  suggestedRewrite: '',
+  promptKind: intent,
+  excerpt: prompt.slice(0, 120),
+});
+
 const countMatches = (text, patterns) => patterns.reduce((count, pattern) => (
   pattern.test(text) ? count + 1 : count
 ), 0);
@@ -114,6 +168,8 @@ const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
 const scorePrompt = (rawPrompt) => {
   const prompt = typeof rawPrompt === 'string' ? rawPrompt.trim() : '';
+  const intent = classifyIntent(prompt);
+  if (intent) return intentApproval(prompt, intent);
   const words = prompt.split(/\s+/).filter(Boolean);
   const lines = prompt.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
 
@@ -162,6 +218,7 @@ const scorePrompt = (rawPrompt) => {
     score,
     verdict,
     allowed: verdict === 'approved',
+    intent: null,
     reasons,
     dimensions,
     suggestedRewrite: buildSuggestedRewrite(prompt, reasons),

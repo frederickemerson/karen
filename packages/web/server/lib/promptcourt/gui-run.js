@@ -203,6 +203,31 @@ export const createGuiRunRuntime = ({
         run.runnerResult = runnerOutput ?? null;
       }
 
+      // Conversational chitchat and read-only exploration prompts don't
+      // produce code changes, so there's nothing to quiz the user on.
+      // Karen approved the run; finish it cleanly without fabricating a diff.
+      if (evaluation.intent === 'conversational' || evaluation.intent === 'exploration') {
+        run.diff = '';
+        run.diffSource = 'none';
+        run.diffNote = null;
+        run.changedFiles = [];
+        run.quiz = null;
+        run.result = {
+          status: 'approved',
+          intent: evaluation.intent,
+          message: evaluation.intent === 'conversational'
+            ? 'Karen approved chitchat — no quiz required.'
+            : 'Karen approved exploration — no quiz required.',
+        };
+        emit(
+          run,
+          'completed',
+          evaluation.intent === 'conversational' ? 'Chitchat — no quiz required.' : 'Exploration — no quiz required.',
+          run.result.message,
+        );
+        return;
+      }
+
       const synthesized = runnerOutput?.diff
         ? { diff: runnerOutput.diff, source: runnerOutput.diffSource || 'runner', note: runnerOutput.diffNote || null }
         : await synthesizeGuiDiff({ prompt: run.prompt });

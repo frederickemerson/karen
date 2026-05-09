@@ -582,6 +582,14 @@ const recordBlocked = (prompt, evaluation) => store.recordBlockedPrompt({
 
 const printVerdict = (prompt, evaluation) => {
   const tone = evaluation.allowed ? 'green' : 'red';
+  if (evaluation.intent === 'conversational') {
+    line(color('Verdict: PASS — chitchat allowed (no code change requested).', tone));
+    return;
+  }
+  if (evaluation.intent === 'exploration') {
+    line(color('Verdict: PASS — exploration allowed (read-only intent).', tone));
+    return;
+  }
   line(color(`Verdict: ${evaluation.verdict.toUpperCase()} ${evaluation.score}/100`, tone));
   if (evaluation.reasons.length > 0) {
     line(color('Charges:', 'amber'));
