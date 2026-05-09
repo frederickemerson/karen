@@ -451,6 +451,20 @@ const runKarenPrompt = async (prompt: string): Promise<{ message: string; run: G
   };
 };
 
+const fetchGuiRun = async (runId: string): Promise<GuiRun> => {
+  const response = await fetch(`/api/promptcourt/gui-runs/${encodeURIComponent(runId)}`, {
+    headers: { accept: 'application/json' },
+  });
+  const payload = await response.json().catch(() => ({})) as { error?: string; run?: GuiRun };
+  if (!response.ok) {
+    throw new Error(payload.error || `Karen run lookup failed (${response.status})`);
+  }
+  if (!payload.run) {
+    throw new Error('Karen did not return that guarded run.');
+  }
+  return payload.run;
+};
+
 const PromptCourtLayout: React.FC<{
   profile: PromptCourtProfile | null;
   overview: PromptCourtOverview | null;
@@ -465,6 +479,7 @@ const PromptCourtLayout: React.FC<{
   const [isRunning, setIsRunning] = React.useState(false);
   const [quizModalOpen, setQuizModalOpen] = React.useState(false);
   const lastAutoOpenedRunId = React.useRef<string | null>(null);
+  const loadedRunFromRoute = React.useRef<string | null>(null);
   const announcedRunEvents = React.useRef(new Set<string>());
   const feed = overview?.feed ?? [];
   const canRun = runPrompt.trim().length > 0 && !isRunning;
@@ -519,6 +534,42 @@ const PromptCourtLayout: React.FC<{
       events.close();
     };
   }, [profile?.user.username]);
+
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const routeRunId = new URLSearchParams(window.location.search).get('run');
+    if (!routeRunId || loadedRunFromRoute.current === routeRunId) return;
+    loadedRunFromRoute.current = routeRunId;
+    setIsRunning(true);
+    setRunStatus('Karen is opening the guarded run...');
+    void fetchGuiRun(routeRunId)
+      .then((run) => {
+        setActiveGuiRun(run);
+        setActiveGuiRunEvents([]);
+        if (run.status === 'quiz_required' && run.quiz?.questions.length && lastAutoOpenedRunId.current !== run.id) {
+          lastAutoOpenedRunId.current = run.id;
+          setQuizModalOpen(true);
+        }
+        if (run.status === 'blocked' || run.status === 'failed' || run.status === 'completed' || run.status === 'quiz_required') {
+          setIsRunning(false);
+        }
+        if (run.status === 'quiz_required') {
+          setRunStatus('Karen reached the quiz gate. Time to defend the diff.');
+        } else if (run.status === 'blocked') {
+          setRunStatus('Karen blocked that prompt before it touched the code.');
+        } else if (run.status === 'failed') {
+          setRunStatus(run.error || 'Karen GUI run failed.');
+        } else if (run.status === 'completed') {
+          setRunStatus('Karen approved — no quiz required.');
+        } else {
+          setRunStatus('Karen is following the guarded run lifecycle.');
+        }
+      })
+      .catch((nextError) => {
+        setRunStatus(nextError instanceof Error ? nextError.message : 'Karen could not open that guarded run.');
+        setIsRunning(false);
+      });
+  }, []);
 
   React.useEffect(() => {
     if (!activeGuiRun?.id) return;

@@ -70,6 +70,38 @@ See [`packages/karen/README.md`](packages/karen/README.md) for install directory
 
 The web GUI is the scoreboard layer: bad-prompt graveyard, code-read quiz showcase, badge wall, replay tape, leaderboard. See [`packages/ui/src/components/promptcourt/`](packages/ui/src/components/promptcourt/).
 
+### GUI guarded-run demo
+
+Open `http://127.0.0.1:3002/karen` after running `/gui`. Normal GUI prompts are guarded by default: Karen queues the browser run, judges the prompt, streams the lifecycle, and opens the Kahoot-style quiz when the run reaches `quiz_required`. Slash commands still pass through as OpenCode commands.
+
+Use this prompt for a reliable smoke demo:
+
+```text
+Implement a small README documentation change.
+
+Scope: edit README.md only.
+
+Current behavior: README.md does not contain a "Karen Quiz Smoke Test" subsection.
+
+Required behavior: add a subsection near the top titled "Karen Quiz Smoke Test" with exactly this sentence under it: "This line exists only to verify the Karen quiz gate."
+
+Acceptance criteria:
+- README.md is the only file changed.
+- The heading "Karen Quiz Smoke Test" appears exactly once.
+- The sentence "This line exists only to verify the Karen quiz gate." appears exactly once.
+- Do not commit anything.
+
+Verification: run git diff -- README.md and show the diff.
+```
+
+Expected demo flow:
+
+```text
+queued -> judging -> running -> building_quiz -> quiz_required
+```
+
+At `quiz_required`, the GUI shows **Prove you read the diff** with music, voice, diff context, and answer tiles after **Start quiz**.
+
 ## Cloud (optional)
 
 Karen runs local-first. Cloud mode adds public profiles, leaderboard, and org policy via Convex + Clerk.

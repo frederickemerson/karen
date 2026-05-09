@@ -90,6 +90,30 @@ export type PromptCourtRunEvent = {
   createdAt: number;
 };
 
+export type PromptCourtGuiRun = {
+  id: string;
+  sessionId?: string | null;
+  username: string;
+  status: string;
+  promptExcerpt: string;
+  evaluation?: PromptCourtEvaluation | null;
+  quiz?: {
+    id: string;
+    title: string;
+    instructions: string;
+    source: string;
+    questions: Array<{
+      id: string;
+      prompt: string;
+      options: string[];
+      answer: number;
+      why: string;
+    }>;
+  } | null;
+  createdAt: number;
+  updatedAt: number;
+};
+
 const USERNAME_KEY = 'promptcourt_username';
 
 export const getPromptCourtUsername = (): string => {
@@ -133,6 +157,36 @@ export const evaluatePromptCourtPrompt = async (
   }
 
   return response.json() as Promise<PromptCourtEvaluation>;
+};
+
+export const createPromptCourtGuiRun = async (prompt: string): Promise<{ message: string; run: PromptCourtGuiRun }> => {
+  const username = getPromptCourtUsername();
+  const response = await fetch('/api/promptcourt/gui-runs', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      accept: 'application/json',
+      'x-promptcourt-user': username,
+    },
+    body: JSON.stringify({ prompt, username }),
+  });
+  const payload = await response.json().catch(() => ({})) as {
+    message?: string;
+    error?: string;
+    run?: PromptCourtGuiRun;
+  };
+
+  if (!response.ok) {
+    throw new Error(payload.error || `Karen guarded run failed (${response.status})`);
+  }
+  if (!payload.run?.id) {
+    throw new Error('Karen did not return a guarded run id.');
+  }
+
+  return {
+    message: payload.message || 'Karen queued a guarded browser run.',
+    run: payload.run,
+  };
 };
 
 export const fetchPromptCourtFeed = async (): Promise<PromptCourtPublicPost[]> => {

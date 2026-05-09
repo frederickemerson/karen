@@ -31,7 +31,7 @@ Encapsulate every server-side decision Karen makes about a prompt: judgment, rec
 - [`storage.js`](storage.js) - local JSON store at `$XDG_CONFIG_HOME/openchamber/promptcourt.json`. Exports `createPromptCourtStore({ openchamberDataDir, cloudSync? })` returning a store with `recordBlockedPrompt`, `recordApprovedPrompt`, `recordQuizResult`, `recordRunEvent`, `getRunEvents`, `cleanupDevRecords`, `getFeed`, `getProfile`, `getOverview`, and `normalizeUsername`. Atomic writes via temp-file rename. Computes derived profile stats (discipline score, level, streaks, rewards).
 - [`privacy.js`](privacy.js) - `redactPublicText(value, maxLength)` redacts API keys, tokens, secrets, OpenAI/GitHub key shapes, emails, URLs, and `/Users/...` / `C:\Users\...` paths. Truncates with an ellipsis. Used everywhere a prompt or post excerpt crosses a boundary.
 - [`cloud.js`](cloud.js) - Convex sync. Exports `createPromptCourtCloudSync({ env, fetchImpl, loadEnvFiles })` returning `{ enabled, send, recordBlockedPrompt, recordApprovedPrompt, recordQuizResult }`. Reads `KAREN_CLOUD_SYNC`, `CONVEX_HTTP_ACTIONS_URL` (and Vite/site aliases), and `KAREN_CLOUD_INGEST_SECRET`. POSTs JSON to `<endpoint>/karen/ingest` with `Authorization: Bearer <secret>`. Errors are swallowed and only logged when `KAREN_CLOUD_DEBUG=1`.
-- [`gui-run.js`](gui-run.js) - browser-initiated guarded-run runtime. Exports `createGuiRunRuntime({ store, evaluate?, runner?, now?, schedule? })` and `registerGuiRunRoutes(app, { express, store, runtime? })`. Tracks an in-memory map of GUI runs (capped at `GUI_RUN_LIMIT=100`, events at `GUI_RUN_EVENT_LIMIT=50`), evaluates the prompt, records blocked/approved into `store`, transitions through `queued -> judging -> running|blocked -> quiz_required|failed`, and exposes per-run SSE.
+- [`gui-run.js`](gui-run.js) - browser-initiated guarded-run runtime. Exports `createGuiRunRuntime({ store, evaluate?, runner?, now?, schedule? })` and `registerGuiRunRoutes(app, { express, store, runtime? })`. Tracks an in-memory map of GUI runs (capped at `GUI_RUN_LIMIT=100`, events at `GUI_RUN_EVENT_LIMIT=50`), evaluates the prompt, records blocked/approved into `store`, transitions implementation prompts through `queued -> judging -> running -> building_quiz -> quiz_required`, completes conversational/exploration prompts without a quiz, and exposes per-run SSE.
 - [`replay-video.js`](replay-video.js) - replay-tape video contract + renderers. Exports `REPLAY_VIDEO_SCHEMA_VERSION`, `REPLAY_COMPOSITION_ID`, `buildReplayStepsFromEvents`, `normalizeReplaySteps`, `buildReplayVideoContract`, `createStubReplayRenderer`, `createRemotionReplayRenderer`, `createReplayVideoRenderer`, and `renderReplayVideoExport`. The Remotion renderer is selected when `KAREN_REPLAY_RENDERER=remotion`; otherwise a stub JSON renderer ships a Remotion-ready manifest.
 - [`replay-video-routes.js`](replay-video-routes.js) - HTTP wrapper for replay export. Exports `createReplayVideoExportHandler({ store, renderer, outputDir })` and `registerPromptCourtReplayVideoRoutes(app, { express, openchamberDataDir, store, renderer? })`. Output is written under `<openchamberDataDir>/promptcourt-replay-exports/`.
 - [`routes.js`](routes.js) - HTTP surface. Exports `registerPromptCourtRoutes(app, { express, openchamberDataDir, buildOpenCodeUrl, getOpenCodeAuthHeaders })` and `evaluatePromptCourtRun({ store, prompt, username })`. Mounts `/api/promptcourt/*`, the guarded `/api/session/:sessionId/prompt_async` proxy, and registers the GUI-run and replay-export routes.
@@ -54,6 +54,9 @@ HTTP endpoints mounted by [`registerPromptCourtRoutes`](routes.js):
 | GET | `/api/promptcourt/gui-runs` | List recent GUI runs (optional `username`, `limit`). |
 | GET | `/api/promptcourt/gui-runs/:runId` | Fetch a single GUI run's public state. |
 | GET | `/api/promptcourt/gui-runs/:runId/events` | SSE stream of GUI-run lifecycle events. Heartbeat every 1.5s. |
+| POST | `/api/promptcourt/gui-runs/:runId/answer` | Submit a quiz answer. Wrong answers finalize the run as rollback. |
+| POST | `/api/promptcourt/gui-runs/:runId/complete` | Finalize a quiz as passed after all answers are correct. |
+| POST | `/api/promptcourt/gui-runs/:runId/abandon` | Treat a closed quiz as failed and record rollback. |
 | POST | `/api/promptcourt/replay/export` | Build a replay-tape video contract from run events and write it via the configured renderer. |
 | POST | `/api/session/:sessionId/prompt_async` | Guarded proxy to OpenCode's prompt_async. Blocks weak prompts (HTTP 422) before forwarding. |
 
@@ -89,7 +92,9 @@ graph TD
 
 `storage.js` always writes locally first. After a successful write, it calls the cloud sync's `recordX` method, which schedules a background POST. A second `appendRunEvent` is appended only when `cloudSync.enabled` is true, marking the local record as mirrored.
 
-`gui-run.js` is a separate runtime: it does not shell out to a terminal. The browser-launched run is evaluated in-process and, if approved, runs through an injectable `runner` function (currently a stub that stops at the quiz gate) before transitioning to `quiz_required`.
+`gui-run.js` is a separate runtime: it does not shell out to a terminal. The browser-launched run is evaluated in-process and, if approved, runs through an injectable `runner` function. Implementation prompts receive a synthesized or runner-provided diff and transition to `quiz_required`; conversational or read-only exploration prompts finish as `completed` because there is no diff to defend.
+
+The full GUI composer uses this same endpoint for non-slash normal-mode prompts. The UI creates the run, redirects to `/karen?run=<id>`, opens the SSE stream, and mounts the Kahoot-style quiz modal when the run reaches `quiz_required`. Slash commands are intentionally excluded so OpenCode command autocomplete and command execution still work.
 
 ## Invariants
 

@@ -22,7 +22,7 @@ Make Karen's records public, glanceable, and arcade-shaped. Convert PromptCourt'
 
 ## Files
 
-- [`PromptCourtPage.tsx`](PromptCourtPage.tsx) - the live profile page. Composes `LaunchControls`, `LiveRunStream`, `RecentSessions`, `ProfilePanel`, `BadPromptGraveyard`, `ProofProfileCard`, and the auto-mounting `KarenQuizGameModal`. Subscribes to `/api/promptcourt/runs/events` SSE for the global live run stream and, when launching a guarded run from the browser, to `/api/promptcourt/gui-runs/:runId/events` for that run's lifecycle. Auto-opens `KarenQuizGameModal` once per run when status hits `quiz_required`. Reads PromptCourt overview/profile data from Convex when configured and falls back to local data when not.
+- [`PromptCourtPage.tsx`](PromptCourtPage.tsx) - the live profile page. Composes `LaunchControls`, `LiveRunStream`, `RecentSessions`, `ProfilePanel`, `BadPromptGraveyard`, `ProofProfileCard`, and the auto-mounting `KarenQuizGameModal`. Subscribes to `/api/promptcourt/runs/events` SSE for the global live run stream and, when launching a guarded run from the browser, to `/api/promptcourt/gui-runs/:runId/events` for that run's lifecycle. Auto-opens `KarenQuizGameModal` once per run when status hits `quiz_required`, including direct links such as `/karen?run=<id>`. Reads PromptCourt overview/profile data from Convex when configured and falls back to local data when not.
 - [`KarenQuizGameModal.tsx`](KarenQuizGameModal.tsx) - full-screen Kahoot-style quiz overlay shown when a GUI run reaches `quiz_required`. Reads the diff and questions off the run, plays a Kahoot-inspired music loop, speaks each question through the Karen ElevenLabs TTS proxy (with browser TTS fallback), and walks the user through `intro` → `question` → `wrong`/`passed` stages. Submits answers, completion, and abandonment via `submitGuiAnswer`, `completeGuiQuiz`, and `abandonGuiQuiz` from `../../../lib/promptcourt.ts`.
 - [`KarenLandingPage.tsx`](KarenLandingPage.tsx) - the public marketing page. Assembles the courtroom showcase, replay tape, badge wall, leaderboard, voice panel, and graveyard into a single scrollable surface.
 - [`KarenCloudProvider.tsx`](KarenCloudProvider.tsx) - root provider. Wraps children in `ConvexProviderWithClerk` (when configured) or a no-op fallback. Reads `VITE_CONVEX_URL` and `VITE_CLERK_PUBLISHABLE_KEY`.
@@ -47,6 +47,11 @@ Public exports:
 - `KarenLandingPage` - the marketing assembly.
 - `BadPromptGraveyard`, `KarenBadgeWall`, `KarenReplayTape`, `CourtroomDemo`, `DiffQuizShowcase`, `LiveLeaderboardShowcase`, `ProofProfileCard`, `DeleteOrDefend`, `GrandmaVoicePanel`, `KarenMascot`, `KarenLogo` - showcase components consumed by the landing and live pages.
 
+GUI prompt behavior:
+
+- The main chat composer queues non-slash normal-mode prompts through `/api/promptcourt/gui-runs` by default, then redirects to `/karen?run=<id>` so the guarded-run stream and quiz modal are the default GUI experience.
+- Slash commands remain OpenCode commands; the guarded-run handoff must not swallow `/` command autocomplete or execution.
+
 Data sources:
 
 - Convex queries (`convex/react`): `karen.overview`, `karen.profile`. Mutations: `karen.upsertCurrentUser` (Clerk-gated).
@@ -64,13 +69,13 @@ graph TD
   LivePage -->|"useQuery(karen.overview)"| Convex["convex/karen.ts"]
   LivePage -->|"useQuery(karen.profile)"| Convex
   LivePage -->|"SSE"| Routes["/api/promptcourt/runs/events"]
-  LivePage -->|"POST /api/promptcourt/run"| Routes
+  LivePage -->|"POST /api/promptcourt/gui-runs"| Routes
   Landing --> Showcases["BadPromptGraveyard / KarenBadgeWall / KarenReplayTape / LiveLeaderboardShowcase / CourtroomDemo / DiffQuizShowcase / DeleteOrDefend / GrandmaVoicePanel"]
   Showcases -->|"Convex queries when available"| Convex
-  Showcases -.->|"static demo data when offline"| FallbackData["bundled demo records"]
+  Showcases -.->|"setup or empty state when offline"| FallbackData["local state"]
 ```
 
-`KarenCloudProvider` is the gate. When Convex/Clerk are not configured (`VITE_CONVEX_URL` or `VITE_CLERK_PUBLISHABLE_KEY` missing), the provider rendres children directly and Convex-backed components fall back to bundled demo data so the landing page still renders.
+`KarenCloudProvider` is the gate. When Convex/Clerk are not configured (`VITE_CONVEX_URL` or `VITE_CLERK_PUBLISHABLE_KEY` missing), the provider renders children directly and Convex-backed components must show a setup, local, or empty state instead of pretending mock records are live data.
 
 ## Invariants
 

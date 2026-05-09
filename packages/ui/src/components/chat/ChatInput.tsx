@@ -77,6 +77,7 @@ import { fetchResponseStyleInstruction } from '@/lib/responseStyle';
 import { wrapSystemReminder } from '@/lib/systemReminder';
 import { getSyncMessages } from '@/sync/sync-refs';
 import {
+    createPromptCourtGuiRun,
     evaluatePromptCourtPrompt,
     getPromptCourtUsername,
     setPromptCourtUsername,
@@ -1600,8 +1601,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({ onOpenSettings, scrollTo
 
         if (!primaryText && additionalParts.length === 0) return;
 
-        const shouldRunPromptCourt = inputMode === 'normal' && !primaryText.trimStart().startsWith('/');
-        if (shouldRunPromptCourt) {
+        const shouldRunGuardedPromptCourt = inputMode === 'normal' && !primaryText.trimStart().startsWith('/');
+        if (shouldRunGuardedPromptCourt) {
             const promptCourtText = [
                 primaryText,
                 ...additionalParts
@@ -1610,18 +1611,39 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({ onOpenSettings, scrollTo
             ].filter((part) => part.trim().length > 0).join('\n\n');
 
             if (promptCourtText.trim()) {
+                setPromptCourtEvaluating(true);
                 try {
-                    const evaluation = await evaluatePromptCourtPrompt(promptCourtText, { recordBlocked: true });
-                    setPromptCourtEvaluation(evaluation);
-                    if (!evaluation.allowed) {
-                        toast.error(`Karen publicly blocked this ${evaluation.score}/100 prompt.`);
-                        textareaRef.current?.focus();
-                        return;
+                    const { message: guardedRunMessage, run } = await createPromptCourtGuiRun(promptCourtText);
+                    setPromptCourtEvaluation(null);
+                    if (currentSessionId && hasQueuedMessages) {
+                        clearQueue(currentSessionId);
                     }
+                    if (!queuedOnly) {
+                        setMessage('');
+                        confirmedMentionsRef.current.clear();
+                        saveStoredDraft(currentSessionId, '');
+                        saveConfirmedMentions(currentSessionId, confirmedMentionsRef.current);
+                        setHistoryIndex(-1);
+                        setDraftMessage('');
+                        if (attachedFiles.length > 0) {
+                            clearAttachedFiles();
+                        }
+                        setExpandedInput(false);
+                    }
+                    if (isMobile) {
+                        textareaRef.current?.blur();
+                    }
+                    toast.success(`${guardedRunMessage} Opening Karen.`);
+                    if (typeof window !== 'undefined') {
+                        window.location.assign(`/karen?run=${encodeURIComponent(run.id)}`);
+                    }
+                    return;
                 } catch (error) {
-                    toast.error(error instanceof Error ? error.message : 'Karen evaluation failed');
+                    toast.error(error instanceof Error ? error.message : 'Karen guarded run failed');
                     textareaRef.current?.focus();
                     return;
+                } finally {
+                    setPromptCourtEvaluating(false);
                 }
             }
         }

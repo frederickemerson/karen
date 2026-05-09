@@ -20,7 +20,7 @@ export interface KarenVoiceSettings {
 export interface KarenVoicePreviewResult {
   ok: boolean;
   reason?: string;
-  usedProvider: 'browser' | 'elevenlabs' | 'none';
+  usedProvider: 'browser' | 'elevenlabs' | 'server-say' | 'none';
   characterCost?: string;
   cacheHit?: boolean;
 }
@@ -271,9 +271,13 @@ const postKarenElevenLabsAudio = async (
   };
 };
 
+let currentKarenAudio: HTMLAudioElement | null = null;
+
 export const playKarenAudioBlob = async (blob: Blob): Promise<void> => {
   const url = URL.createObjectURL(blob);
   const audio = new Audio(url);
+  currentKarenAudio?.pause();
+  currentKarenAudio = audio;
   try {
     await audio.play();
     await new Promise<void>((resolve, reject) => {
@@ -281,8 +285,41 @@ export const playKarenAudioBlob = async (blob: Blob): Promise<void> => {
       audio.onerror = () => reject(new Error('Audio playback failed.'));
     });
   } finally {
+    if (currentKarenAudio === audio) {
+      currentKarenAudio = null;
+    }
     URL.revokeObjectURL(url);
   }
+};
+
+const speakKarenServerSayPreview = async (
+  text: string,
+  settings: KarenVoiceSettings,
+): Promise<KarenVoicePreviewResult> => {
+  const normalized = normalizeKarenVoiceSettings(settings);
+  const message = text.trim() || buildKarenRoast(normalized.mood);
+  const rate = Math.round(145 + ((normalized.rate - 0.55) / (1.35 - 0.55)) * 95);
+
+  const response = await fetch('/api/tts/say/speak', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      accept: 'audio/mp4',
+    },
+    body: JSON.stringify({
+      text: message,
+      voice: 'Grandma (English (US))',
+      rate,
+    }),
+  });
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({})) as { error?: string };
+    throw new Error(payload.error || `macOS say failed (${response.status})`);
+  }
+
+  await playKarenAudioBlob(await response.blob());
+  return { ok: true, usedProvider: 'server-say' };
 };
 
 export const speakKarenElevenLabsPreview = async (
@@ -471,6 +508,11 @@ export const playKarenEventAudio = async (
 };
 
 export const cancelKarenVoicePreview = (): void => {
+  if (currentKarenAudio) {
+    currentKarenAudio.pause();
+    currentKarenAudio.currentTime = 0;
+    currentKarenAudio = null;
+  }
   if (isSpeechSynthesisAvailable()) {
     window.speechSynthesis.cancel();
   }
@@ -490,6 +532,13 @@ export const speakKarenVoicePreview = async (
 
   const normalized = normalizeKarenVoiceSettings(settings);
   const message = text.trim() || buildKarenRoast(normalized.mood);
+
+  try {
+    return await speakKarenServerSayPreview(message, normalized);
+  } catch {
+    // Fall back to browser speech when the local Karen server or macOS say route is unavailable.
+  }
+
   const voices = await waitForKarenSpeechVoices();
   const voice = pickKarenGrandmaVoice(voices, normalized.voiceURI);
   const utterance = new window.SpeechSynthesisUtterance(message);
