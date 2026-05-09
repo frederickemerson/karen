@@ -608,8 +608,6 @@ const printVerdict = (prompt, evaluation) => {
 
 const shouldRunAgentForEvaluation = (evaluation) => (
   evaluation?.allowed === true
-  && evaluation.intent !== 'conversational'
-  && evaluation.intent !== 'exploration'
 );
 
 const maybeScreamAtLongPrompt = (prompt) => {

@@ -249,15 +249,15 @@ describe('Karen quiz analyzer v2', () => {
 });
 
 describe('Karen OpenCode TUI interception heuristics', () => {
-  test('does not run OpenCode for conversational or read-only exploration passes', () => {
+  test('runs OpenCode for every allowed prompt after the verdict gate passes', () => {
     expect(__karenTest.shouldRunAgentForEvaluation({
       allowed: true,
       intent: 'conversational',
-    })).toBe(false);
+    })).toBe(true);
     expect(__karenTest.shouldRunAgentForEvaluation({
       allowed: true,
       intent: 'exploration',
-    })).toBe(false);
+    })).toBe(true);
     expect(__karenTest.shouldRunAgentForEvaluation({
       allowed: true,
       intent: null,
