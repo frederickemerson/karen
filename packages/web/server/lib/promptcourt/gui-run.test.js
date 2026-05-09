@@ -45,7 +45,7 @@ describe('promptcourt GUI run runtime', () => {
     expect(store.getOverview().totals.sessions).toBe(1);
   });
 
-  it('queues approved GUI runs and stops at the quiz gate', async () => {
+  it('queues approved GUI runs, builds a real quiz, and stops at the gate', async () => {
     const store = createStore();
     const seen = [];
     const runtime = createGuiRunRuntime({
@@ -58,18 +58,77 @@ describe('promptcourt GUI run runtime', () => {
     });
 
     const queued = runtime.createRun({ username: 'GUI Tester', prompt: approvedPrompt });
-    const finished = await runtime.waitForRunStatus(queued.id, 'quiz_required', 100);
+    const finished = await runtime.waitForRunStatus(queued.id, 'quiz_required', 5000);
 
     expect(finished.status).toBe('quiz_required');
     expect(finished.promptScore).toBeGreaterThanOrEqual(70);
-    expect(finished.quiz.title).toBe('Read-before-promote checkpoint');
+    expect(finished.quiz.title).toBe('Prove you read the diff');
+    expect(finished.quiz.questions.length).toBeGreaterThanOrEqual(1);
+    for (const question of finished.quiz.questions) {
+      expect(question.options).toHaveLength(4);
+      expect(question.answer).toBeGreaterThanOrEqual(0);
+      expect(question.answer).toBeLessThan(4);
+    }
+    expect(typeof finished.diff).toBe('string');
+    expect(finished.diff.length).toBeGreaterThan(20);
+    expect(finished.changedFiles.length).toBeGreaterThan(0);
     expect(seen).toEqual(['running']);
-    expect(runtime.getRunEvents(queued.id).map((event) => event.status)).toEqual([
-      'queued',
-      'judging',
-      'running',
-      'quiz_required',
-    ]);
+    const runtimeStatuses = runtime.getRunEvents(queued.id).map((event) => event.status);
+    expect(runtimeStatuses).toContain('queued');
+    expect(runtimeStatuses).toContain('judging');
+    expect(runtimeStatuses).toContain('running');
+    expect(runtimeStatuses).toContain('building_quiz');
+    expect(runtimeStatuses).toContain('quiz_required');
     expect(store.getRunEvents({ username: 'GUI Tester' }).map((event) => event.status)).toContain('quiz_required');
+  });
+
+  it('grades a wrong answer and rolls the run back', async () => {
+    const store = createStore();
+    const runtime = createGuiRunRuntime({
+      store,
+      schedule: (fn) => queueMicrotask(fn),
+    });
+
+    const queued = runtime.createRun({ username: 'GUI Tester', prompt: approvedPrompt });
+    const ready = await runtime.waitForRunStatus(queued.id, 'quiz_required', 5000);
+    const firstQuestion = ready.quiz.questions[0];
+    const wrongIndex = (firstQuestion.answer + 1) % firstQuestion.options.length;
+
+    const result = runtime.submitAnswer(queued.id, {
+      questionId: firstQuestion.id,
+      answerIndex: wrongIndex,
+    });
+
+    expect(result.correct).toBe(false);
+    expect(result.answer).toBe(firstQuestion.answer);
+
+    const after = runtime.getRun(queued.id);
+    expect(after.status).toBe('rollback');
+    expect(after.result.passed).toBe(false);
+    expect(store.getRunEvents({ username: 'GUI Tester' }).map((event) => event.status)).toContain('rollback');
+  });
+
+  it('grades all-correct answers and finalizes the quiz', async () => {
+    const store = createStore();
+    const runtime = createGuiRunRuntime({
+      store,
+      schedule: (fn) => queueMicrotask(fn),
+    });
+
+    const queued = runtime.createRun({ username: 'GUI Tester', prompt: approvedPrompt });
+    const ready = await runtime.waitForRunStatus(queued.id, 'quiz_required', 5000);
+
+    for (const question of ready.quiz.questions) {
+      const result = runtime.submitAnswer(queued.id, {
+        questionId: question.id,
+        answerIndex: question.answer,
+      });
+      expect(result.correct).toBe(true);
+    }
+
+    const finalized = runtime.completeQuiz(queued.id);
+    expect(finalized.status).toBe('quiz_passed');
+    expect(finalized.result.passed).toBe(true);
+    expect(store.getRunEvents({ username: 'GUI Tester' }).map((event) => event.status)).toContain('quiz_passed');
   });
 });

@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { __karenTest } from './karen.js';
-import { analyzeQuizEvidence, parseDiff as parseQuizDiff } from '../lib/quiz-analyzer.js';
+import { analyzeQuizEvidence, parseDiff as parseQuizDiff } from '../../web/server/lib/promptcourt/quiz-analyzer.js';
 import {
   createOpenCodeHookAdapter,
   detectOpenCodeHookSupport,

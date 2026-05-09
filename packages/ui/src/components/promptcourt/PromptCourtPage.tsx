@@ -16,6 +16,7 @@ import { cn } from '@/lib/utils';
 import { playKarenEventAudio, type KarenAudioEvent } from '@/lib/karenVoice';
 import { KarenLogo } from './KarenLogo';
 import { KarenMascot } from './KarenMascot';
+import { KarenQuizGameModal, type KarenQuizRun } from './KarenQuizGameModal';
 import { isKarenAuthConfigured, isKarenCloudConfigured } from '@/lib/karenCloudConfig';
 import { api } from '../../../../../convex/_generated/api';
 
@@ -390,20 +391,31 @@ type GuiRun = {
   sessionId?: string | null;
   username: string;
   status: string;
+  promptExcerpt?: string;
   promptScore?: number | null;
   verdict?: string | null;
   reasons?: string[];
   quiz?: {
+    id: string;
     title: string;
     instructions: string;
+    source: string;
     questions: Array<{
       id: string;
       prompt: string;
-      choices: string[];
-      answerIndex: number;
-      explanation: string;
+      options: string[];
+      answer: number;
+      evidence?: string;
+      why?: string;
+      source?: string;
     }>;
   } | null;
+  diff?: string | null;
+  diffSource?: string | null;
+  diffNote?: string | null;
+  changedFiles?: string[];
+  result?: { passed: boolean; completedAt: number; wrongQuestionId?: string | null } | null;
+  prompt?: string;
   error?: string | null;
   createdAt: number;
   updatedAt: number;
@@ -448,6 +460,8 @@ const PromptCourtLayout: React.FC<{
   const [activeGuiRun, setActiveGuiRun] = React.useState<GuiRun | null>(null);
   const [activeGuiRunEvents, setActiveGuiRunEvents] = React.useState<GuiRunEvent[]>([]);
   const [isRunning, setIsRunning] = React.useState(false);
+  const [quizModalOpen, setQuizModalOpen] = React.useState(false);
+  const lastAutoOpenedRunId = React.useRef<string | null>(null);
   const announcedRunEvents = React.useRef(new Set<string>());
   const feed = overview?.feed ?? [];
   const canRun = runPrompt.trim().length > 0 && !isRunning;
@@ -522,7 +536,11 @@ const PromptCourtLayout: React.FC<{
         });
         if (payload.run.status === 'quiz_required') {
           setIsRunning(false);
-          setRunStatus('Karen reached the quiz gate. The next step is the real diff-backed browser quiz.');
+          setRunStatus('Karen reached the quiz gate. Time to defend the diff.');
+          if (payload.run.quiz && payload.run.quiz.questions.length > 0 && lastAutoOpenedRunId.current !== payload.run.id) {
+            lastAutoOpenedRunId.current = payload.run.id;
+            setQuizModalOpen(true);
+          }
         } else if (payload.run.status === 'blocked') {
           setIsRunning(false);
           setRunStatus('Karen blocked that prompt before it touched the code.');
@@ -630,17 +648,34 @@ const PromptCourtLayout: React.FC<{
                 ) : null}
               </div>
               <div className="rounded-md border border-border bg-background/50 p-3">
-                <div className="typography-micro text-muted-foreground">Quiz Gate</div>
-                {activeGuiRun.quiz ? (
-                  <div className="mt-1">
-                    <div className="typography-ui-label text-foreground">{activeGuiRun.quiz.title}</div>
-                    <p className="mt-1 typography-body text-muted-foreground">{activeGuiRun.quiz.instructions}</p>
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <div className="typography-micro text-muted-foreground">Quiz Gate</div>
+                    {activeGuiRun.quiz ? (
+                      <div className="mt-1">
+                        <div className="typography-ui-label text-foreground">{activeGuiRun.quiz.title}</div>
+                        <p className="mt-1 typography-body text-muted-foreground">{activeGuiRun.quiz.instructions}</p>
+                        <p className="mt-1 typography-micro text-muted-foreground">
+                          {activeGuiRun.quiz.questions.length} questions • {activeGuiRun.quiz.source}
+                          {activeGuiRun.diffSource ? ` • diff ${activeGuiRun.diffSource}` : ''}
+                        </p>
+                      </div>
+                    ) : (
+                      <p className="mt-1 typography-body text-muted-foreground">
+                        Waiting for Karen to judge the prompt and hand the run to the quiz gate.
+                      </p>
+                    )}
                   </div>
-                ) : (
-                  <p className="mt-1 typography-body text-muted-foreground">
-                    Waiting for Karen to judge the prompt and hand the run to the quiz gate.
-                  </p>
-                )}
+                  {activeGuiRun.status === 'quiz_required' && activeGuiRun.quiz?.questions.length ? (
+                    <button
+                      type="button"
+                      onClick={() => setQuizModalOpen(true)}
+                      className="shrink-0 rounded-sm bg-primary px-3 py-1.5 typography-ui-label font-semibold text-primary-foreground hover:opacity-90"
+                    >
+                      Open quiz
+                    </button>
+                  ) : null}
+                </div>
               </div>
             </div>
             {activeGuiRunEvents.length > 0 ? (
@@ -691,6 +726,21 @@ const PromptCourtLayout: React.FC<{
           </section>
         </div>
       </main>
+      <KarenQuizGameModal
+        open={quizModalOpen && !!activeGuiRun?.quiz?.questions.length}
+        run={activeGuiRun?.quiz ? {
+          id: activeGuiRun.id,
+          prompt: activeGuiRun.prompt,
+          promptExcerpt: activeGuiRun.promptExcerpt,
+          promptScore: activeGuiRun.promptScore ?? null,
+          diff: activeGuiRun.diff ?? null,
+          diffSource: activeGuiRun.diffSource ?? null,
+          diffNote: activeGuiRun.diffNote ?? null,
+          changedFiles: activeGuiRun.changedFiles ?? [],
+          quiz: activeGuiRun.quiz,
+        } as KarenQuizRun : null}
+        onClose={() => setQuizModalOpen(false)}
+      />
     </div>
   );
 };
