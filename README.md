@@ -32,8 +32,6 @@ Bad prompts and failed quizzes go to your public PromptCourt profile.
 
 Requires [OpenCode CLI](https://opencode.ai), Node 20+, and `git`.
 
-![Install](docs/karen/assets/install.png)
-
 ```sh
 curl -fsSL https://raw.githubusercontent.com/frederickemerson/karen/main/install.sh | sh
 ```
