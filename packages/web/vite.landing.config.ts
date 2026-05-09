@@ -1,10 +1,28 @@
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { themeStoragePlugin } from '../../vite-theme-plugin';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// Vercel serves `index.html` natively for the root path. Vite emits the
+// landing entry as `landing.html` (matching the source filename so it does
+// not collide with the main app's `index.html`), so copy it to
+// `index.html` in the output once the bundle is written. The rewrite in
+// vercel.json still handles deep links to `/landing.html` and friends.
+const emitIndexHtmlPlugin = (): Plugin => ({
+  name: 'karen-landing-emit-index-html',
+  apply: 'build',
+  closeBundle() {
+    const outDir = path.resolve(__dirname, '../../landing-dist');
+    const src = path.join(outDir, 'landing.html');
+    const dest = path.join(outDir, 'index.html');
+    if (!fs.existsSync(src)) return;
+    fs.copyFileSync(src, dest);
+  },
+});
 
 // Standalone Vite config used by Vercel to build only the marketing/landing
 // surface. The full OpenChamber app continues to build via vite.config.ts and
@@ -28,6 +46,7 @@ export default defineConfig({
       },
     }),
     themeStoragePlugin(),
+    emitIndexHtmlPlugin(),
   ],
   resolve: {
     alias: [
