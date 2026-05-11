@@ -1,4 +1,7 @@
 import { spawn } from 'node:child_process';
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -11,6 +14,96 @@ import { createPromptCourtStore } from './storage.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '../../../../..');
 const karenBin = path.join(root, 'packages/karen/bin/karen.js');
+
+let promptCourtSessionToken = null;
+const getPromptCourtSessionToken = () => {
+  if (promptCourtSessionToken) return promptCourtSessionToken;
+  const envToken = process.env.KAREN_PROMPTCOURT_SESSION_TOKEN;
+  if (envToken && envToken.trim().length > 0) {
+    promptCourtSessionToken = envToken.trim();
+  } else {
+    promptCourtSessionToken = crypto.randomBytes(32).toString('hex');
+    console.log(`[promptcourt] generated session token: ${promptCourtSessionToken}`);
+  }
+  return promptCourtSessionToken;
+};
+
+const extractBearer = (req) => {
+  const header = typeof req.get === 'function' ? req.get('authorization') : null;
+  if (typeof header === 'string' && header.startsWith('Bearer ')) {
+    return header.slice(7).trim();
+  }
+  return null;
+};
+
+const extractSessionCookie = (req) => {
+  const cookieHeader = typeof req.get === 'function' ? req.get('cookie') : null;
+  if (typeof cookieHeader !== 'string') return null;
+  for (const part of cookieHeader.split(';')) {
+    const [name, ...rest] = part.trim().split('=');
+    if (name === 'karen_promptcourt_session') {
+      return decodeURIComponent(rest.join('='));
+    }
+  }
+  return null;
+};
+
+const verifyClerkBearer = async (token) => {
+  if (!process.env.CLERK_SECRET_KEY) return false;
+  try {
+    const clerk = await import('@clerk/backend').catch(() => null);
+    if (!clerk?.verifyToken) return false;
+    await clerk.verifyToken(token, { secretKey: process.env.CLERK_SECRET_KEY });
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const requirePromptCourtSession = async (req, res, next) => {
+  const expected = getPromptCourtSessionToken();
+  const presented = extractBearer(req) || extractSessionCookie(req);
+  if (presented && presented === expected) {
+    return next();
+  }
+  if (presented && await verifyClerkBearer(presented)) {
+    return next();
+  }
+  return res.status(401).json({ ok: false, error: 'unauthorized' });
+};
+
+const parseCwdAllowList = () => {
+  const raw = process.env.KAREN_PROMPTCOURT_CWD_ROOTS;
+  const defaults = [process.cwd(), os.homedir()];
+  if (typeof raw !== 'string' || !raw.trim()) return defaults;
+  const extra = raw.split(',').map((entry) => entry.trim()).filter(Boolean);
+  return [...defaults, ...extra];
+};
+
+const isSubpath = (candidate, parent) => {
+  const relative = path.relative(parent, candidate);
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+};
+
+const validateCwd = (rawCwd) => {
+  if (typeof rawCwd !== 'string' || !rawCwd.trim()) {
+    return { ok: false, error: 'cwd must be a non-empty string' };
+  }
+  let realPath;
+  try {
+    realPath = fs.realpathSync(rawCwd);
+  } catch (error) {
+    return { ok: false, error: `cwd does not resolve: ${error instanceof Error ? error.message : 'unknown'}` };
+  }
+  const allowed = parseCwdAllowList().map((entry) => {
+    try { return fs.realpathSync(entry); } catch { return entry; }
+  });
+  const ok = allowed.some((parent) => isSubpath(realPath, parent));
+  if (!ok) {
+    return { ok: false, error: 'cwd is outside the allow-list' };
+  }
+  return { ok: true, cwd: realPath };
+};
 
 const getUsernameFromRequest = (req, fallback = 'local-user') => {
   const header = typeof req.get === 'function' ? req.get('x-promptcourt-user') : null;
@@ -125,6 +218,11 @@ export const registerPromptCourtRoutes = (app, {
 }) => {
   const store = createPromptCourtStore({ openchamberDataDir });
   const jsonParser = express.json({ limit: '50mb' });
+  getPromptCourtSessionToken();
+  app.use('/api/promptcourt/profile', requirePromptCourtSession);
+  app.use('/api/promptcourt/feed', requirePromptCourtSession);
+  app.use('/api/promptcourt/runs', requirePromptCourtSession);
+  app.use('/api/promptcourt/gui-runs', requirePromptCourtSession);
   registerGuiRunRoutes(app, { express, store });
   registerPromptCourtReplayVideoRoutes(app, { express, openchamberDataDir, store });
 
@@ -228,8 +326,14 @@ export const registerPromptCourtRoutes = (app, {
       return res.status(verdict.status).json(verdict.payload);
     }
 
+    const requestedCwd = typeof req.body?.cwd === 'string' && req.body.cwd.trim() ? req.body.cwd : process.cwd();
+    const cwdResult = validateCwd(requestedCwd);
+    if (!cwdResult.ok) {
+      return res.status(400).json({ error: cwdResult.error });
+    }
+
     try {
-      const launched = launchKarenTerminalRun({ prompt, cwd: req.body?.cwd || process.cwd(), username: store.normalizeUsername(username) });
+      const launched = launchKarenTerminalRun({ prompt, cwd: cwdResult.cwd, username: store.normalizeUsername(username) });
       store.recordRunEvent({
         sessionId: queued.sessionId,
         username,

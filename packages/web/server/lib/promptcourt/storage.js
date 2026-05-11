@@ -52,6 +52,17 @@ const atomicWrite = (targetPath, value) => {
   fs.renameSync(tmpPath, targetPath);
 };
 
+const mutateLocks = new Map();
+const acquirePathLock = (targetPath) => {
+  const previous = mutateLocks.get(targetPath) || Promise.resolve();
+  let release;
+  const next = new Promise((resolve) => {
+    release = resolve;
+  });
+  mutateLocks.set(targetPath, previous.then(() => next));
+  return { previous, release };
+};
+
 const normalizeUsername = (value) => {
   const username = typeof value === 'string' ? value.trim().toLowerCase() : '';
   const normalized = username.replace(/[^a-z0-9_-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
@@ -189,10 +200,15 @@ export const createPromptCourtStore = ({
   const statePath = path.join(openchamberDataDir, 'promptcourt.json');
 
   const mutate = (fn) => {
-    const state = safeRead(statePath);
-    const result = fn(state);
-    atomicWrite(statePath, state);
-    return result;
+    const { release } = acquirePathLock(statePath);
+    try {
+      const state = safeRead(statePath);
+      const result = fn(state);
+      atomicWrite(statePath, state);
+      return result;
+    } finally {
+      release();
+    }
   };
 
   const read = () => safeRead(statePath);
@@ -207,6 +223,9 @@ export const createPromptCourtStore = ({
           displayName: normalized,
           createdAt: Date.now(),
         };
+        const redactedReasons = Array.isArray(evaluation.reasons)
+          ? evaluation.reasons.map((reason) => redactPublicText(reason, 240, { policy: privacyPolicy }))
+          : [];
         const session = {
           id: `pc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
           username: normalized,
@@ -214,7 +233,7 @@ export const createPromptCourtStore = ({
           prompt: redactPublicText(prompt, 1200, { policy: privacyPolicy }),
           promptScore: evaluation.score,
           verdict: evaluation.verdict,
-          reasons: evaluation.reasons,
+          reasons: redactedReasons,
           createdAt: Date.now(),
         };
         state.sessions.push(session);
@@ -223,7 +242,7 @@ export const createPromptCourtStore = ({
           username: normalized,
           status: 'blocked',
           label: `Blocked ${evaluation.score}/100 prompt`,
-          details: evaluation.reasons.slice(0, 4).join(' · '),
+          details: redactedReasons.slice(0, 4).join(' · '),
         });
         const post = sanitizePublicPost({
           id: `post_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
@@ -256,6 +275,9 @@ export const createPromptCourtStore = ({
           displayName: normalized,
           createdAt: Date.now(),
         };
+        const redactedReasons = Array.isArray(evaluation.reasons)
+          ? evaluation.reasons.map((reason) => redactPublicText(reason, 240, { policy: privacyPolicy }))
+          : [];
         const session = {
           id: `pc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
           opencodeSessionId: sessionId,
@@ -264,7 +286,7 @@ export const createPromptCourtStore = ({
           prompt: redactPublicText(prompt, 1200, { policy: privacyPolicy }),
           promptScore: evaluation.score,
           verdict: evaluation.verdict,
-          reasons: evaluation.reasons,
+          reasons: redactedReasons,
           quizPassed: null,
           rollbackTriggered: false,
           createdAt: Date.now(),

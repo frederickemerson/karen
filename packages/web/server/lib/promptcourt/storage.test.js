@@ -238,6 +238,39 @@ describe('promptcourt storage', () => {
     expect(store.getProfile('private').stats.publicFailureCount).toBe(0);
   });
 
+  it('redacts evaluation reasons when persisting sessions', () => {
+    const store = createStore();
+    const { session } = store.recordBlockedPrompt({
+      username: 'Reason Tester',
+      prompt: 'fix it',
+      evaluation: {
+        score: 10,
+        verdict: 'blocked',
+        reasons: ['Leaked OPENAI_API_KEY=sk-abcdefghijklmnopqrstuvwxyz in prompt'],
+      },
+      publicPost: {
+        title: 'Blocked',
+        promptExcerpt: 'fix it',
+        failureReasons: ['Leaked OPENAI_API_KEY=sk-abcdefghijklmnopqrstuvwxyz in prompt'],
+      },
+    });
+
+    expect(session.reasons[0]).not.toContain('sk-abcdefghijklmnopqrstuvwxyz');
+    expect(session.reasons[0]).toContain('[redacted]');
+
+    const approved = store.recordApprovedPrompt({
+      username: 'Reason Tester',
+      prompt: 'Implement scoped change with tests.',
+      evaluation: {
+        score: 80,
+        verdict: 'approved',
+        reasons: ['Note: see https://user:pass@example.com/secret'],
+      },
+      sessionId: 'oc_redact',
+    });
+    expect(approved.reasons[0]).not.toContain('user:pass@example.com');
+  });
+
   it('recovers from corrupt local state with an empty default profile', () => {
     const openchamberDataDir = createTempDir();
     fs.writeFileSync(path.join(openchamberDataDir, 'promptcourt.json'), '{not json');

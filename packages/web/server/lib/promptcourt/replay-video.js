@@ -5,6 +5,25 @@ import path from 'node:path';
 export const REPLAY_VIDEO_SCHEMA_VERSION = 'karen.replay-video.v1';
 export const REPLAY_COMPOSITION_ID = 'KarenReplay';
 
+export const REMOTION_INSTALL_HINT = 'Video export requires Remotion to be installed. Run: bun add remotion @remotion/cli @remotion/bundler @remotion/renderer';
+
+export class RemotionNotInstalledError extends Error {
+  constructor(message = REMOTION_INSTALL_HINT, { cause } = {}) {
+    super(message);
+    this.name = 'RemotionNotInstalledError';
+    this.code = 'REMOTION_NOT_INSTALLED';
+    this.statusCode = 503;
+    if (cause !== undefined) this.cause = cause;
+  }
+}
+
+const isModuleNotFoundError = (error) => {
+  if (!error) return false;
+  if (error.code === 'MODULE_NOT_FOUND' || error.code === 'ERR_MODULE_NOT_FOUND') return true;
+  const message = error instanceof Error ? error.message : String(error);
+  return /Cannot find (module|package)|module not found/i.test(message);
+};
+
 const KNOWN_FORMATS = new Set(['json', 'mp4']);
 const KNOWN_STATUSES = new Set(['complete', 'active', 'pending', 'failed']);
 
@@ -223,7 +242,10 @@ export const createRemotionReplayRenderer = ({
     try {
       renderer = await import('@remotion/renderer');
     } catch (error) {
-      throw new Error(`Remotion renderer is not installed: ${error instanceof Error ? error.message : String(error)}`);
+      if (isModuleNotFoundError(error)) {
+        throw new RemotionNotInstalledError(REMOTION_INSTALL_HINT, { cause: error });
+      }
+      throw error;
     }
 
     fs.mkdirSync(outputDir, { recursive: true });

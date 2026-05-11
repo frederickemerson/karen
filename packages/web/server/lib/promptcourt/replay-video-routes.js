@@ -1,6 +1,6 @@
 import path from 'node:path';
 
-import { renderReplayVideoExport } from './replay-video.js';
+import { RemotionNotInstalledError, renderReplayVideoExport } from './replay-video.js';
 
 const getRequestUsername = (req) => {
   const header = typeof req.get === 'function' ? req.get('x-promptcourt-user') : null;
@@ -55,9 +55,15 @@ export const createReplayVideoExportHandler = ({
       contract: result.contract,
     });
   } catch (error) {
-    res.status(503).json({
+    const message = error instanceof Error ? error.message : 'Replay export failed';
+    const status = error instanceof RemotionNotInstalledError
+      ? 503
+      : typeof error?.statusCode === 'number'
+        ? error.statusCode
+        : 500;
+    res.status(status).json({
       ok: false,
-      error: error instanceof Error ? error.message : 'Replay export failed',
+      error: message,
     });
   }
 };

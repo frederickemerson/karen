@@ -212,4 +212,50 @@ describe('promptcourt GUI run runtime', () => {
     expect(finalized.result.passed).toBe(true);
     expect(store.getRunEvents({ username: 'GUI Tester' }).map((event) => event.status)).toContain('quiz_passed');
   });
+
+  it('does not leak the correct answer index on a correct submission', async () => {
+    const store = createStore();
+    const runtime = createGuiRunRuntime({
+      store,
+      runner: approvedRunner,
+      schedule: (fn) => queueMicrotask(fn),
+    });
+
+    const queued = runtime.createRun({ username: 'GUI Tester', prompt: approvedPrompt });
+    const ready = await runtime.waitForRunStatus(queued.id, 'quiz_required', 5000);
+    const question = ready.quiz.questions[0];
+    const result = runtime.submitAnswer(queued.id, {
+      questionId: question.id,
+      answerIndex: question.answer,
+    });
+
+    expect(result.correct).toBe(true);
+    expect(result).not.toHaveProperty('answer');
+  });
+
+  it('refuses to complete the quiz when no answers were submitted', async () => {
+    const store = createStore();
+    const runtime = createGuiRunRuntime({
+      store,
+      runner: approvedRunner,
+      schedule: (fn) => queueMicrotask(fn),
+    });
+
+    const queued = runtime.createRun({ username: 'GUI Tester', prompt: approvedPrompt });
+    await runtime.waitForRunStatus(queued.id, 'quiz_required', 5000);
+
+    const finalized = runtime.completeQuiz(queued.id);
+    expect(finalized.status).toBe('rollback');
+    expect(finalized.result.passed).toBe(false);
+  });
+
+  it('uses UUID-style run identifiers', async () => {
+    const store = createStore();
+    const runtime = createGuiRunRuntime({
+      store,
+      schedule: (fn) => queueMicrotask(fn),
+    });
+    const queued = runtime.createRun({ username: 'GUI Tester', prompt: 'hi karen' });
+    expect(queued.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+  });
 });

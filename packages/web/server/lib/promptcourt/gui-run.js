@@ -1,3 +1,5 @@
+import crypto from 'node:crypto';
+
 import { evaluatePrompt, extractPromptText } from './evaluator.js';
 import { redactPublicText } from './privacy.js';
 import { buildQuiz } from './quiz.js';
@@ -330,8 +332,9 @@ export const createGuiRunRuntime = ({
 
     const correct = numericAnswer === question.answer;
     if (correct) {
+      run.correctAnswers = (run.correctAnswers || 0) + 1;
       emit(run, 'quiz_answer_correct', `Correct: ${question.prompt.slice(0, 80)}`, '', { recordStore: false, keepStatus: true });
-      return { correct: true, answer: question.answer, explanation: question.why };
+      return { correct: true, explanation: question.why };
     }
 
     emit(run, 'quiz_answer_wrong', `Wrong: ${question.prompt.slice(0, 80)}`, `picked option ${numericAnswer + 1}`, { recordStore: false, keepStatus: true });
@@ -392,6 +395,20 @@ export const createGuiRunRuntime = ({
       error.status = 409;
       throw error;
     }
+    const totalQuestions = run.quiz?.questions?.length ?? 0;
+    const correctAnswers = run.correctAnswers || 0;
+    const rawThreshold = Number.parseFloat(process.env.KAREN_QUIZ_PASS_THRESHOLD);
+    const threshold = Number.isFinite(rawThreshold) && rawThreshold > 0 && rawThreshold <= 1 ? rawThreshold : 1.0;
+    const requiredCorrect = Math.max(1, Math.ceil(totalQuestions * threshold));
+    if (totalQuestions === 0 || correctAnswers < requiredCorrect) {
+      return finalizeQuiz(run, {
+        passed: false,
+        wrongQuestion: {
+          prompt: `Quiz completion rejected: ${correctAnswers}/${totalQuestions} correct (need ${requiredCorrect}).`,
+          id: null,
+        },
+      });
+    }
     return finalizeQuiz(run, { passed: true });
   };
 
@@ -411,7 +428,7 @@ export const createGuiRunRuntime = ({
         throw error;
       }
       const run = {
-        id: `gui_${now()}_${Math.random().toString(36).slice(2, 8)}`,
+        id: crypto.randomUUID(),
         sessionId: null,
         username: store.normalizeUsername(username),
         status: 'queued',
@@ -426,6 +443,7 @@ export const createGuiRunRuntime = ({
         diffSource: null,
         diffNote: null,
         changedFiles: [],
+        correctAnswers: 0,
         result: null,
         error: null,
         createdAt: now(),
