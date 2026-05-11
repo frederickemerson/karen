@@ -20,6 +20,14 @@ const authorizeIngest = (request: Request) => {
   return { ok: true };
 };
 
+const requireAdminActor = (request: Request) => {
+  const actor = request.headers.get('x-karen-admin-actor');
+  if (!actor || actor.trim().length === 0) {
+    return { ok: false as const, status: 400, error: 'missing_admin_actor' };
+  }
+  return { ok: true as const, actor: actor.trim() };
+};
+
 http.route({
   path: '/karen/health',
   method: 'GET',
@@ -53,10 +61,14 @@ http.route({
     if (!authorization.ok) {
       return json({ ok: false, error: authorization.error }, authorization.status);
     }
+    const actorCheck = requireAdminActor(request);
+    if (!actorCheck.ok) {
+      return json({ ok: false, error: actorCheck.error }, actorCheck.status);
+    }
 
     const body = await request.json().catch(() => ({}));
     const mode = body && typeof body === 'object' && (body as any).mode === 'all' ? 'all' : 'smoke';
-    const result = await ctx.runMutation(internal.karen.cleanupDevRecordsBySecret, { mode });
+    const result = await ctx.runMutation(internal.karen.cleanupDevRecordsBySecret, { mode, actor: actorCheck.actor });
     return json({ ok: true, ...result });
   }),
 });
@@ -69,6 +81,10 @@ http.route({
     if (!authorization.ok) {
       return json({ ok: false, error: authorization.error }, authorization.status);
     }
+    const actorCheck = requireAdminActor(request);
+    if (!actorCheck.ok) {
+      return json({ ok: false, error: actorCheck.error }, actorCheck.status);
+    }
 
     const body = await request.json().catch(() => null);
     if (!body || typeof body !== 'object') {
@@ -80,6 +96,7 @@ http.route({
       moderationStatus: (body as any).moderationStatus,
       visibility: (body as any).visibility,
       reason: (body as any).reason,
+      actor: actorCheck.actor,
     });
     return json(result);
   }),
@@ -93,6 +110,10 @@ http.route({
     if (!authorization.ok) {
       return json({ ok: false, error: authorization.error }, authorization.status);
     }
+    const actorCheck = requireAdminActor(request);
+    if (!actorCheck.ok) {
+      return json({ ok: false, error: actorCheck.error }, actorCheck.status);
+    }
 
     const body = await request.json().catch(() => null);
     if (!body || typeof body !== 'object') {
@@ -104,6 +125,7 @@ http.route({
       status: (body as any).status,
       publicProfileEnabled: (body as any).publicProfileEnabled,
       reason: (body as any).reason,
+      actor: actorCheck.actor,
     });
     return json(result);
   }),
@@ -117,6 +139,10 @@ http.route({
     if (!authorization.ok) {
       return json({ ok: false, error: authorization.error }, authorization.status);
     }
+    const actorCheck = requireAdminActor(request);
+    if (!actorCheck.ok) {
+      return json({ ok: false, error: actorCheck.error }, actorCheck.status);
+    }
 
     const body = await request.json().catch(() => null);
     if (!body || typeof body !== 'object') {
@@ -127,6 +153,7 @@ http.route({
       userId: (body as any).userId,
       mode: (body as any).mode,
       reason: (body as any).reason,
+      actor: actorCheck.actor,
     });
     return json(result);
   }),
@@ -139,6 +166,10 @@ http.route({
     const authorization = authorizeIngest(request);
     if (!authorization.ok) {
       return json({ ok: false, error: authorization.error }, authorization.status);
+    }
+    const actorCheck = requireAdminActor(request);
+    if (!actorCheck.ok) {
+      return json({ ok: false, error: actorCheck.error }, actorCheck.status);
     }
 
     const body = await request.json().catch(() => null);
@@ -154,6 +185,7 @@ http.route({
       requireClerkForPublicProfiles: (body as any).requireClerkForPublicProfiles,
       allowLocalUsersOnLeaderboard: (body as any).allowLocalUsersOnLeaderboard,
       moderationMode: (body as any).moderationMode,
+      actor: actorCheck.actor,
     });
     return json(result);
   }),

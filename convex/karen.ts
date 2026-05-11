@@ -21,6 +21,17 @@ const stripUndefined = <T extends Record<string, unknown>>(value: T) => Object.f
   Object.entries(value).filter(([, entry]) => entry !== undefined),
 ) as T;
 
+const fallbackEventId = (parts: Array<string | number | undefined>) => {
+  // FNV-1a 32-bit; sufficient for idempotency keys when client omits eventId.
+  let hash = 0x811c9dc5;
+  const input = parts.map((value) => String(value ?? '')).join('|');
+  for (let index = 0; index < input.length; index += 1) {
+    hash ^= input.charCodeAt(index);
+    hash = (hash + ((hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24))) >>> 0;
+  }
+  return `auto-${hash.toString(16)}-${input.length}`;
+};
+
 const adminSubjects = () => String(process.env.KAREN_ADMIN_USER_IDS || '')
   .split(',')
   .map((entry) => entry.trim())
@@ -337,8 +348,8 @@ const sessionView = (session: any) => ({
 
 const profileForUser = async (ctx: any, user: any) => {
   const [sessions, posts] = await Promise.all([
-    ctx.db.query('sessions').withIndex('by_user', (q: any) => q.eq('userId', user._id)).collect(),
-    ctx.db.query('publicPosts').withIndex('by_username', (q: any) => q.eq('username', user.username)).collect(),
+    ctx.db.query('sessions').withIndex('by_user', (q: any) => q.eq('userId', user._id)).take(200),
+    ctx.db.query('publicPosts').withIndex('by_username', (q: any) => q.eq('username', user.username)).take(200),
   ]);
   return computeProfile(user, sessions, posts);
 };
@@ -447,7 +458,7 @@ const collectVisiblePublicPosts = async (ctx: any, limit = 50) => {
   const requestedLimit = Math.max(0, Math.min(100, Math.floor(limit)));
   if (requestedLimit === 0) return [];
 
-  const posts = await ctx.db.query('publicPosts').collect();
+  const posts = await ctx.db.query('publicPosts').take(500);
 
   return posts
     .filter(visiblePost)
@@ -460,9 +471,9 @@ const buildLeaderboard = async (ctx: any, limit = 25) => {
   if (requestedLimit === 0) return [];
 
   const [users, sessions, posts] = await Promise.all([
-    ctx.db.query('users').collect(),
-    ctx.db.query('sessions').collect(),
-    ctx.db.query('publicPosts').collect(),
+    ctx.db.query('users').take(500),
+    ctx.db.query('sessions').take(500),
+    ctx.db.query('publicPosts').take(500),
   ]);
   const defaultPolicy = await getOrgPolicy(ctx, 'default');
   const publicUsers = users.filter((user: any) => (
@@ -550,6 +561,7 @@ const isSmokeRecord = (value: any) => {
 };
 
 const cleanupDevRecords = async (ctx: any, mode: 'smoke' | 'all') => {
+  // Cleanup must enumerate all records (smoke filtering or mode==='all' wipe); .take() would skip rows.
   const [sessions, posts, users, rewards, audits] = await Promise.all([
     ctx.db.query('sessions').collect(),
     ctx.db.query('publicPosts').collect(),
@@ -599,6 +611,7 @@ const cleanupDevRecords = async (ctx: any, mode: 'smoke' | 'all') => {
     }
   }
 
+  // Post-cleanup counts: enumerate remaining rows so the result accurately reports zero/leftover.
   const [afterSessions, afterPosts, afterUsers, afterRewards, afterAudits] = await Promise.all([
     ctx.db.query('sessions').collect(),
     ctx.db.query('publicPosts').collect(),
@@ -670,9 +683,10 @@ const moderateUser = async (
   }));
 
   if (args.status === 'suspended' || args.status === 'deleted' || args.publicProfileEnabled === false) {
+    // Mutation: capped at 200 per user; further records moderated lazily on subsequent queries.
     const [sessions, posts] = await Promise.all([
-      ctx.db.query('sessions').withIndex('by_user', (q: any) => q.eq('userId', args.userId)).collect(),
-      ctx.db.query('publicPosts').withIndex('by_username', (q: any) => q.eq('username', user.username)).collect(),
+      ctx.db.query('sessions').withIndex('by_user', (q: any) => q.eq('userId', args.userId)).take(200),
+      ctx.db.query('publicPosts').withIndex('by_username', (q: any) => q.eq('username', user.username)).take(200),
     ]);
     for (const session of sessions) {
       await ctx.db.patch(session._id, {
@@ -711,6 +725,7 @@ const resetUserData = async (
 ) => {
   const user = await ctx.db.get(args.userId);
   if (!user) throw new Error('User not found');
+  // Mutation needs every record for this user to fully delete — partial reset would leave orphans.
   const [sessions, posts, rewards] = await Promise.all([
     ctx.db.query('sessions').withIndex('by_user', (q: any) => q.eq('userId', args.userId)).collect(),
     ctx.db.query('publicPosts').withIndex('by_username', (q: any) => q.eq('username', user.username)).collect(),
@@ -772,9 +787,9 @@ export const overview = query({
   args: {},
   handler: async (ctx) => {
     const [users, posts, sessions] = await Promise.all([
-      ctx.db.query('users').collect(),
+      ctx.db.query('users').take(500),
       collectVisiblePublicPosts(ctx, 25),
-      ctx.db.query('sessions').collect(),
+      ctx.db.query('sessions').take(500),
     ]);
 
     const defaultPolicy = await getOrgPolicy(ctx, 'default');
@@ -990,12 +1005,12 @@ export const adminOverview = query({
   handler: async (ctx) => {
     await requireAdmin(ctx);
     const [users, sessions, posts, rewards, audits, orgSettings] = await Promise.all([
-      ctx.db.query('users').collect(),
-      ctx.db.query('sessions').collect(),
-      ctx.db.query('publicPosts').collect(),
-      ctx.db.query('rewards').collect(),
-      ctx.db.query('adminAuditLog').order('desc').take(50),
-      ctx.db.query('orgSettings').collect(),
+      ctx.db.query('users').take(500),
+      ctx.db.query('sessions').take(500),
+      ctx.db.query('publicPosts').take(500),
+      ctx.db.query('rewards').take(500),
+      ctx.db.query('adminAuditLog').order('desc').take(100),
+      ctx.db.query('orgSettings').take(100),
     ]);
     return {
       totals: {
@@ -1111,10 +1126,11 @@ export const adminSetOrgSettings = mutation({
 export const cleanupDevRecordsBySecret = internalMutation({
   args: {
     mode: v.union(v.literal('smoke'), v.literal('all')),
+    actor: v.string(),
   },
   handler: async (ctx, args) => {
     const result = await cleanupDevRecords(ctx, args.mode);
-    await auditAdminAction(ctx, 'cleanup_dev_records_by_secret', 'all', undefined, 'ingest-secret', args.mode, result);
+    await auditAdminAction(ctx, 'cleanup_dev_records_by_secret', 'all', undefined, args.actor, args.mode, result);
     return result;
   },
 });
@@ -1125,8 +1141,9 @@ export const moderatePublicPostBySecret = internalMutation({
     moderationStatus: v.union(v.literal('visible'), v.literal('hidden'), v.literal('deleted')),
     visibility: v.optional(v.union(v.literal('public'), v.literal('private'), v.literal('local_only'))),
     reason: v.optional(v.string()),
+    actor: v.string(),
   },
-  handler: async (ctx, args) => moderatePublicPost(ctx, args, 'ingest-secret'),
+  handler: async (ctx, args) => moderatePublicPost(ctx, args, args.actor),
 });
 
 export const moderateUserBySecret = internalMutation({
@@ -1135,8 +1152,9 @@ export const moderateUserBySecret = internalMutation({
     status: v.optional(v.union(v.literal('active'), v.literal('suspended'), v.literal('deleted'))),
     publicProfileEnabled: v.optional(v.boolean()),
     reason: v.optional(v.string()),
+    actor: v.string(),
   },
-  handler: async (ctx, args) => moderateUser(ctx, args, 'ingest-secret'),
+  handler: async (ctx, args) => moderateUser(ctx, args, args.actor),
 });
 
 export const resetUserDataBySecret = internalMutation({
@@ -1144,8 +1162,9 @@ export const resetUserDataBySecret = internalMutation({
     userId: v.id('users'),
     mode: v.union(v.literal('activity'), v.literal('profile')),
     reason: v.optional(v.string()),
+    actor: v.string(),
   },
-  handler: async (ctx, args) => resetUserData(ctx, args, 'ingest-secret'),
+  handler: async (ctx, args) => resetUserData(ctx, args, args.actor),
 });
 
 export const setOrgSettingsBySecret = internalMutation({
@@ -1157,17 +1176,31 @@ export const setOrgSettingsBySecret = internalMutation({
     requireClerkForPublicProfiles: v.optional(v.boolean()),
     allowLocalUsersOnLeaderboard: v.optional(v.boolean()),
     moderationMode: v.optional(v.union(v.literal('manual'), v.literal('auto_hide_flagged'))),
+    actor: v.string(),
   },
-  handler: async (ctx, args) => setOrgSettings(ctx, args, 'ingest-secret'),
+  handler: async (ctx, args) => setOrgSettings(ctx, args, args.actor),
 });
 
 export const ingestEvent = internalMutation({
   args: {
+    eventId: v.optional(v.string()),
     kind: v.union(v.literal('blocked_prompt'), v.literal('approved_prompt'), v.literal('quiz_result')),
     session: sessionValidator,
     publicPost: v.optional(publicPostValidator),
   },
   handler: async (ctx, args) => {
+    const eventId = normalizeOptionalString(args.eventId)
+      ?? fallbackEventId([args.session.localSessionId, args.session.createdAt, args.kind]);
+
+    const existingEvent = await ctx.db
+      .query('ingestEvents')
+      .withIndex('by_eventId', (q) => q.eq('eventId', eventId))
+      .unique();
+    if (existingEvent) {
+      return { ok: true, deduped: true, eventId };
+    }
+    await ctx.db.insert('ingestEvents', { eventId, processedAt: Date.now() });
+
     const username = normalizeUsername(args.session.username);
     const userId = args.session.clerkUserId
       ? await ensureUser(ctx, {
@@ -1239,8 +1272,7 @@ export const ingestEvent = internalMutation({
       const existingPost = publicPost.localPostId
         ? await ctx.db
           .query('publicPosts')
-          .withIndex('by_username', (q) => q.eq('username', username))
-          .filter((q) => q.eq(q.field('localPostId'), publicPost.localPostId))
+          .withIndex('by_username_local_post', (q) => q.eq('username', username).eq('localPostId', publicPost.localPostId))
           .first()
         : null;
       const postPromptRedaction = redactText(publicPost.promptExcerpt);
@@ -1280,6 +1312,6 @@ export const ingestEvent = internalMutation({
       }
     }
 
-    return { ok: true, kind: args.kind, sessionId };
+    return { ok: true, deduped: false, eventId, kind: args.kind, sessionId };
   },
 });

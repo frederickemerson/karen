@@ -83,6 +83,7 @@ export default defineSchema({
   })
     .index('by_created', ['createdAt'])
     .index('by_username', ['username'])
+    .index('by_username_local_post', ['username', 'localPostId'])
     .index('by_moderation', ['moderationStatus'])
     .index('by_visibility', ['visibility']),
 
@@ -124,4 +125,9 @@ export default defineSchema({
     .index('by_created', ['createdAt'])
     .index('by_actor', ['actor'])
     .index('by_action', ['action']),
+
+  ingestEvents: defineTable({
+    eventId: v.string(),
+    processedAt: v.number(),
+  }).index('by_eventId', ['eventId']),
 });
