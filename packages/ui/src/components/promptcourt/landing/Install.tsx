@@ -26,14 +26,6 @@ const dailyCommands = [
   ['Help', 'karen --help', 'List every subcommand and flag.'],
 ] as const;
 
-const envOverrides = [
-  ['KAREN_REPO_URL', 'https://github.com/frederickemerson/karen.git', 'Git repo to clone from. Point at a fork to install your own build.'],
-  ['KAREN_BRANCH', 'main', 'Branch to track. Useful for testing release candidates.'],
-  ['KAREN_HOME', '$HOME/.karen', 'Where the Karen source is cloned and updated.'],
-  ['KAREN_INSTALL_DIR', '$HOME/.local/bin', 'Where the `karen` launcher script is written.'],
-  ['KAREN_SKIP_BUN', 'unset', 'Set to 1 to fail rather than auto-install Bun.'],
-] as const;
-
 const useCopyToClipboard = (text: string) => {
   const [copied, setCopied] = React.useState(false);
   const copy = React.useCallback(() => {
@@ -215,104 +207,5 @@ export const Install: React.FC = () => (
       </div>
     </section>
 
-    {/* ENV OVERRIDES */}
-    <section>
-      <div className="mb-4 font-mono text-xs font-semibold uppercase tracking-[0.18em] text-[#6f6f6f]">
-        environment overrides
-      </div>
-      <h2 className="text-3xl font-semibold tracking-normal sm:text-4xl">
-        Want it somewhere else? Pass env vars.
-      </h2>
-      <p className="mt-3 max-w-3xl text-base leading-7 text-[#4d4d4d]">
-        Every variable below is optional. Set them before piping the installer to <code className="font-mono text-sm">sh</code> — for example,
-        {' '}
-        <code className="font-mono text-sm">KAREN_HOME=/opt/karen curl -fsSL …/install.sh | sh</code>.
-      </p>
-
-      <div className="mt-6 overflow-hidden rounded-md border border-[#d8d8d8] bg-white">
-        <div className="hidden grid-cols-[1.1fr_1fr_1.6fr] gap-4 border-b border-[#e2ddd0] bg-[#f0ebdd] px-5 py-3 font-mono text-[11px] uppercase tracking-[0.14em] text-[#6f6f6f] md:grid">
-          <div>Variable</div>
-          <div>Default</div>
-          <div>Purpose</div>
-        </div>
-        <ul className="divide-y divide-[#e2ddd0]">
-          {envOverrides.map(([name, defaultValue, description]) => (
-            <li
-              key={name}
-              className="grid gap-2 px-5 py-4 md:grid-cols-[1.1fr_1fr_1.6fr] md:items-center md:gap-4"
-            >
-              <code className="font-mono text-sm font-semibold">{name}</code>
-              <code className="font-mono text-xs text-[#4d4d4d]">{defaultValue}</code>
-              <span className="text-sm leading-6 text-[#4d4d4d]">{description}</span>
-            </li>
-          ))}
-        </ul>
-      </div>
-    </section>
-
-    {/* MANUAL + TROUBLESHOOTING */}
-    <section className="grid gap-10 lg:grid-cols-2">
-      <div>
-        <div className="mb-4 font-mono text-xs font-semibold uppercase tracking-[0.18em] text-[#6f6f6f]">
-          manual install
-        </div>
-        <h2 className="text-2xl font-semibold sm:text-3xl">Don&apos;t pipe scripts? Do it by hand.</h2>
-        <p className="mt-3 text-sm leading-6 text-[#4d4d4d]">
-          The installer does nothing magic. Run the steps yourself if you prefer.
-        </p>
-        <div className="mt-5 rounded-md border border-[#111] bg-[#111] p-5 font-mono text-xs leading-6 text-[#f6f2e8] shadow-[6px_6px_0_#111]">
-          <div className="text-[#6f6f6f]"># clone the repo</div>
-          <div className="text-[#7bd88f]">git clone https://github.com/frederickemerson/karen.git ~/.karen</div>
-          <div className="mt-2 text-[#6f6f6f]"># install dependencies</div>
-          <div className="text-[#7bd88f]">cd ~/.karen &amp;&amp; bun install</div>
-          <div className="mt-2 text-[#6f6f6f]"># write the launcher into ~/.local/bin</div>
-          <div className="text-[#7bd88f]">node scripts/install-karen.mjs install</div>
-          <div className="mt-2 text-[#6f6f6f]"># verify</div>
-          <div className="text-[#7bd88f]">karen --help</div>
-        </div>
-      </div>
-
-      <div>
-        <div className="mb-4 font-mono text-xs font-semibold uppercase tracking-[0.18em] text-[#6f6f6f]">
-          common snags
-        </div>
-        <h2 className="text-2xl font-semibold sm:text-3xl">If something looks off, start here.</h2>
-        <dl className="mt-5 space-y-4">
-          <div className="rounded-md border border-[#d8d8d8] bg-white p-4">
-            <dt className="font-mono text-sm font-semibold">karen: command not found</dt>
-            <dd className="mt-2 text-sm leading-6 text-[#4d4d4d]">
-              <code className="font-mono text-xs">~/.local/bin</code> is not on your PATH. Add it to your shell profile:
-              <code className="mt-2 block rounded-sm bg-[#111] px-3 py-2 font-mono text-xs text-[#7bd88f]">
-                export PATH="$HOME/.local/bin:$PATH"
-              </code>
-            </dd>
-          </div>
-          <div className="rounded-md border border-[#d8d8d8] bg-white p-4">
-            <dt className="font-mono text-sm font-semibold">Node 20+ required</dt>
-            <dd className="mt-2 text-sm leading-6 text-[#4d4d4d]">
-              Install or upgrade Node from <a href="https://nodejs.org" target="_blank" rel="noopener noreferrer" className="underline">nodejs.org</a> (or use <code className="font-mono text-xs">nvm install 20</code>) and re-run the installer.
-            </dd>
-          </div>
-          <div className="rounded-md border border-[#d8d8d8] bg-white p-4">
-            <dt className="font-mono text-sm font-semibold">$KAREN_HOME exists but is not a git repo</dt>
-            <dd className="mt-2 text-sm leading-6 text-[#4d4d4d]">
-              Move or remove that directory, or set <code className="font-mono text-xs">KAREN_HOME</code> to a fresh path.
-            </dd>
-          </div>
-        </dl>
-        <p className="mt-5 text-sm leading-6 text-[#555]">
-          Still stuck?{' '}
-          <a
-            href={ISSUES_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="underline"
-          >
-            Open a GitHub issue
-          </a>{' '}
-          with the installer output.
-        </p>
-      </div>
-    </section>
   </div>
 );
