@@ -137,7 +137,10 @@ describe('OpenCode lifecycle', () => {
       PATH: `/tmp/karen-git-guard:${pathValue}`,
       env: {
         KAREN_REAL_GIT: '/usr/bin/git',
+        KAREN_REAL_SHELL: '/bin/sh',
+        KAREN_GIT_GUARD_PATH: `/tmp/karen-git-guard:${pathValue}`,
         KAREN_GIT_COMMIT_GUARD: '1',
+        SHELL: '/tmp/karen-git-guard/karen-shell',
       },
     }));
     const runtime = createRuntime({ buildKarenGitCommitGuardEnv });
@@ -147,7 +150,10 @@ describe('OpenCode lifecycle', () => {
     expect(buildKarenGitCommitGuardEnv).toHaveBeenCalledWith('/home/user/.bun/bin:/usr/local/bin:/usr/bin');
     expect(options.env.PATH).toBe('/tmp/karen-git-guard:/home/user/.bun/bin:/usr/local/bin:/usr/bin');
     expect(options.env.KAREN_REAL_GIT).toBe('/usr/bin/git');
+    expect(options.env.KAREN_REAL_SHELL).toBe('/bin/sh');
+    expect(options.env.KAREN_GIT_GUARD_PATH).toBe('/tmp/karen-git-guard:/home/user/.bun/bin:/usr/local/bin:/usr/bin');
     expect(options.env.KAREN_GIT_COMMIT_GUARD).toBe('1');
+    expect(options.env.SHELL).toBe('/tmp/karen-git-guard/karen-shell');
 
     await server.close();
   });

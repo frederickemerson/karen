@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -13,6 +14,7 @@ import { redactPublicText } from '../../web/server/lib/promptcourt/privacy.js';
 import { createPromptCourtStore } from '../../web/server/lib/promptcourt/storage.js';
 import { analyzeDiffImpact, parseDiff } from '../../web/server/lib/promptcourt/quiz-analyzer.js';
 import { buildQuiz } from '../../web/server/lib/promptcourt/quiz.js';
+import { installWorktreeCommitHooks, createCommitTokenFile } from '../../web/server/lib/opencode/git-commit-guard.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '../../..');
@@ -516,31 +518,6 @@ const applyPatch = (patch, args, cwd = process.cwd()) => {
   });
 };
 
-const rollbackToBeforeDiff = ({ beforeDiff, afterDiff }) => {
-  if (!afterDiff.trim()) return true;
-  const reverseAfter = applyPatch(afterDiff, ['-R']);
-  if (reverseAfter.status !== 0) {
-    line(color('Rollback failed while reversing the generated diff.', 'red'));
-    if (reverseAfter.stderr) line(color(reverseAfter.stderr.trim(), 'gray'));
-    return false;
-  }
-
-  const restoreBefore = applyPatch(beforeDiff, []);
-  if (restoreBefore.status !== 0) {
-    line(color('Rollback partially completed, but restoring the pre-existing diff failed.', 'red'));
-    if (restoreBefore.stderr) line(color(restoreBefore.stderr.trim(), 'gray'));
-    return false;
-  }
-
-  return true;
-};
-
-const getChangedFiles = () => {
-  const result = run('git', ['diff', '--name-only']);
-  if (result.status !== 0) return [];
-  return result.stdout.split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean);
-};
-
 const getUntrackedFiles = (cwd) => {
   const result = run('git', ['ls-files', '--others', '--exclude-standard', '-z'], { cwd });
   if (result.status !== 0 || !result.stdout) return [];
@@ -907,12 +884,15 @@ const proxyOpencodeTuiIntercept = (args = []) => new Promise((resolve) => {
   });
 });
 
-const cleanupWorktree = (repoRoot, worktreePath) => {
+const cleanupWorktree = (repoRoot, worktreePath, runtimeDir) => {
   if (!worktreePath) return;
   const removed = run('git', ['worktree', 'remove', '--force', worktreePath], { cwd: repoRoot });
   if (removed.status !== 0 && fs.existsSync(worktreePath)) {
     fs.rmSync(worktreePath, { recursive: true, force: true });
     run('git', ['worktree', 'prune'], { cwd: repoRoot });
+  }
+  if (runtimeDir) {
+    try { fs.rmSync(runtimeDir, { recursive: true, force: true }); } catch {}
   }
 };
 
@@ -929,11 +909,29 @@ const createIsolatedWorktree = () => {
     return { ok: false, error: addResult.stderr?.trim() || 'Failed to create isolated worktree.' };
   }
 
+  const runId = `${process.pid}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
+  const runtimeDir = path.join(os.tmpdir(), 'karen-runs', runId);
+  let commitToken;
+  try {
+    const tokenInfo = createCommitTokenFile({ runtimeDir, fs, path });
+    commitToken = tokenInfo.token;
+    installWorktreeCommitHooks({
+      worktreePath: tempRoot,
+      runtimeDir,
+      allowSecret: commitToken,
+      fs,
+      path,
+    });
+  } catch (error) {
+    cleanupWorktree(repo.root, tempRoot, runtimeDir);
+    return { ok: false, error: `Failed to install Karen commit hooks: ${error?.message || error}` };
+  }
+
   const baselinePatch = getGitDiff(repo.root);
   if (baselinePatch.trim()) {
     const applied = applyPatch(baselinePatch, [], tempRoot);
     if (applied.status !== 0) {
-      cleanupWorktree(repo.root, tempRoot);
+      cleanupWorktree(repo.root, tempRoot, runtimeDir);
       return { ok: false, error: applied.stderr?.trim() || 'Failed to mirror current tracked changes into isolated worktree.' };
     }
   }
@@ -943,7 +941,7 @@ const createIsolatedWorktree = () => {
   }
 
   run('git', ['add', '-A'], { cwd: tempRoot });
-  const commitResult = run('git', [
+  const commitResult = spawnSync('git', [
     '-c',
     'user.name=Karen',
     '-c',
@@ -953,9 +951,13 @@ const createIsolatedWorktree = () => {
     '--quiet',
     '-m',
     'Karen isolated baseline',
-  ], { cwd: tempRoot });
+  ], {
+    cwd: tempRoot,
+    encoding: 'utf8',
+    env: { ...process.env, KAREN_COMMIT_ALLOW_TOKEN: commitToken },
+  });
   if (commitResult.status !== 0) {
-    cleanupWorktree(repo.root, tempRoot);
+    cleanupWorktree(repo.root, tempRoot, runtimeDir);
     return { ok: false, error: commitResult.stderr?.trim() || 'Failed to create isolated baseline.' };
   }
 
@@ -964,6 +966,8 @@ const createIsolatedWorktree = () => {
     repoRoot: repo.root,
     worktreePath: tempRoot,
     runCwd: path.join(tempRoot, repo.prefix),
+    runtimeDir,
+    commitToken,
   };
 };
 
@@ -996,53 +1000,66 @@ const runAgent = async (prompt, session) => {
   }
   try {
     await proxyOpencode(buildRunArgs(prompt), { cwd: isolated.runCwd });
-    const generatedDiff = prepareGeneratedDiff(isolated.worktreePath);
-    if (generatedDiff.trim()) {
-      const summary = parseDiff(generatedDiff);
-      const changedFiles = summary.files.map((file) => file.path);
-      const quizPassed = await runQuiz({ prompt, generatedDiff, cwd: isolated.worktreePath });
-      if (quizPassed) {
-        const promoted = promoteGeneratedDiff(isolated.repoRoot, generatedDiff);
-        store.recordQuizResult({
-          sessionId: session.id,
-          quizPassed: promoted,
-          rollbackTriggered: !promoted,
-          changedFiles,
-          publicPost: promoted ? null : buildQuizFailurePost(prompt, generatedDiff, 'Patch promotion failed'),
-        });
-        line(color(
-          promoted
-            ? 'Generated patch promoted into your real worktree.'
-            : 'Generated patch stayed inside the isolated worktree and was discarded.',
-          promoted ? 'green' : 'amber',
-        ));
-        if (!promoted) {
-          teachAfterDiscard({ prompt, generatedDiff, reason: 'Patch promotion failed' });
+    try {
+      const generatedDiff = prepareGeneratedDiff(isolated.worktreePath);
+      if (generatedDiff.trim()) {
+        const summary = parseDiff(generatedDiff);
+        const changedFiles = summary.files.map((file) => file.path);
+        const quizPassed = await runQuiz({ prompt, generatedDiff, cwd: isolated.worktreePath });
+        if (quizPassed) {
+          const promoted = promoteGeneratedDiff(isolated.repoRoot, generatedDiff);
+          store.recordQuizResult({
+            sessionId: session.id,
+            quizPassed: promoted,
+            rollbackTriggered: !promoted,
+            changedFiles,
+            publicPost: promoted ? null : buildQuizFailurePost(prompt, generatedDiff, 'Patch promotion failed'),
+          });
+          line(color(
+            promoted
+              ? 'Generated patch promoted into your real worktree.'
+              : 'Generated patch stayed inside the isolated worktree and was discarded.',
+            promoted ? 'green' : 'amber',
+          ));
+          if (!promoted) {
+            teachAfterDiscard({ prompt, generatedDiff, reason: 'Patch promotion failed' });
+          }
+        } else {
+          store.recordQuizResult({
+            sessionId: session.id,
+            quizPassed: false,
+            rollbackTriggered: true,
+            changedFiles,
+            publicPost: buildQuizFailurePost(prompt, generatedDiff, 'Failed code-read quiz'),
+          });
+          line(color('Generated work stayed in the isolated worktree and was discarded.', 'amber'));
+          teachAfterDiscard({ prompt, generatedDiff, reason: 'Failed code-read quiz' });
         }
       } else {
         store.recordQuizResult({
           sessionId: session.id,
-          quizPassed: false,
-          rollbackTriggered: true,
-          changedFiles,
-          publicPost: buildQuizFailurePost(prompt, generatedDiff, 'Failed code-read quiz'),
+          quizPassed: true,
+          rollbackTriggered: false,
+          changedFiles: [],
         });
-        line(color('Generated work stayed in the isolated worktree and was discarded.', 'amber'));
-        teachAfterDiscard({ prompt, generatedDiff, reason: 'Failed code-read quiz' });
+        if (verboseAllowed()) {
+          line(color('No generated diff detected after OpenCode finished.', 'amber'));
+        }
       }
-    } else {
-      store.recordQuizResult({
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      store.recordRunEvent({
         sessionId: session.id,
-        quizPassed: true,
-        rollbackTriggered: false,
-        changedFiles: [],
+        username: session.username,
+        status: 'quiz_errored',
+        label: 'Quiz preparation failed before promotion could be evaluated.',
+        details: reason.slice(0, 400),
       });
-      if (verboseAllowed()) {
-        line(color('No generated diff detected after OpenCode finished.', 'amber'));
-      }
+      line(color(`Karen could not prepare the generated diff or run the quiz: ${reason}`, 'red'));
+      throw error;
     }
   } finally {
-    cleanupWorktree(isolated.repoRoot, isolated.worktreePath);
+    cleanupWorktree(isolated.repoRoot, isolated.worktreePath, isolated.runtimeDir);
   }
 };
 
