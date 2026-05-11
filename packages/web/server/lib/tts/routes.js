@@ -259,6 +259,8 @@ const sendElevenLabsAudio = async (res, result, provider) => {
 };
 
 export function registerTtsRoutes(app, { resolveZenModel, sayTTSCapability }) {
+  const jsonParser = express.json({ limit: '256kb' });
+
   let ttsModulePromise = null;
   const getTtsModule = async () => {
     if (!ttsModulePromise) {
@@ -267,7 +269,7 @@ export function registerTtsRoutes(app, { resolveZenModel, sayTTSCapability }) {
     return ttsModulePromise;
   };
 
-  app.post('/api/voice/token', async (req, res) => {
+  app.post('/api/voice/token', jsonParser, async (req, res) => {
     console.log('[Voice] Token request received:', {
       contentType: req.headers['content-type'] || null,
     });
@@ -298,7 +300,7 @@ export function registerTtsRoutes(app, { resolveZenModel, sayTTSCapability }) {
   });
 
   // Server-side TTS endpoint - streams audio from OpenAI TTS API
-  app.post('/api/tts/speak', async (req, res) => {
+  app.post('/api/tts/speak', jsonParser, async (req, res) => {
     try {
       const { text, voice = 'nova', model = 'gpt-4o-mini-tts', speed = 0.9, instructions, summarize = false, providerId, modelId, threshold = 200, maxLength = 500, apiKey, baseURL } = req.body || {};
 
@@ -463,7 +465,7 @@ export function registerTtsRoutes(app, { resolveZenModel, sayTTSCapability }) {
     }
   });
 
-  app.post('/api/karen/elevenlabs/speech', async (req, res) => {
+  app.post('/api/karen/elevenlabs/speech', jsonParser, async (req, res) => {
     try {
       const apiKey = getElevenLabsApiKey();
       if (!apiKey) {
@@ -512,7 +514,7 @@ export function registerTtsRoutes(app, { resolveZenModel, sayTTSCapability }) {
     }
   });
 
-  app.post('/api/karen/elevenlabs/sound-effect', async (req, res) => {
+  app.post('/api/karen/elevenlabs/sound-effect', jsonParser, async (req, res) => {
     try {
       const apiKey = getElevenLabsApiKey();
       if (!apiKey) {
@@ -552,7 +554,7 @@ export function registerTtsRoutes(app, { resolveZenModel, sayTTSCapability }) {
     }
   });
 
-  app.post('/api/text/summarize', async (req, res) => {
+  app.post('/api/text/summarize', jsonParser, async (req, res) => {
     try {
       const { text, threshold = 200, maxLength = 500, mode } = req.body || {};
 
@@ -623,7 +625,7 @@ export function registerTtsRoutes(app, { resolveZenModel, sayTTSCapability }) {
   });
 
   // macOS 'say' command TTS speak endpoint
-  app.post('/api/tts/say/speak', async (req, res) => {
+  app.post('/api/tts/say/speak', jsonParser, async (req, res) => {
     try {
       const { text, voice = 'Samantha', rate = 200 } = req.body || {};
       
