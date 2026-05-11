@@ -1,7 +1,20 @@
 # TTS Module Documentation
 
 ## Purpose
-This module provides server-side Text-to-Speech services using OpenAI's TTS API. Shared text summarization now lives in `packages/web/server/lib/text/` and is consumed here in `tts` mode.
+This module provides server-side Text-to-Speech services using OpenAI's TTS API and ElevenLabs (for Karen's grandma voice and courtroom sound effects). Shared text summarization now lives in `packages/web/server/lib/text/` and is consumed here in `tts` mode.
+
+## Karen ElevenLabs endpoints
+
+Registered by `registerTtsRoutes(app, ...)`:
+
+- `GET /api/karen/elevenlabs/status` - returns `{ configured, secretEnvVar, defaultVoiceId, usage, recommendedModels, features }`. The boolean `configured` reflects whether `ELEVENLABS_API_KEY` is set on the server. The route MUST NEVER include the key value itself in any field of the response.
+- `GET /api/karen/elevenlabs/usage` - daily ElevenLabs character cost, daily cap, cache state.
+- `GET /api/karen/elevenlabs/voices` - proxied voice library listing.
+- `POST /api/karen/elevenlabs/speech` - text-to-speech. Server applies a file-backed cache keyed on payload + output format under `KAREN_AUDIO_CACHE_DIR` and enforces `KAREN_ELEVENLABS_DAILY_CAP`. Returns `audio/mpeg`.
+- `POST /api/karen/elevenlabs/sound-effect` - sound-effect generation (gavel hits, alarms, badge unlocks). Same cache/cap policy.
+
+### Key handling invariant
+`ELEVENLABS_API_KEY` is read on the server only (via `getElevenLabsApiKey()`), sent to ElevenLabs in the `xi-api-key` header, and never returned in any response body or header. The browser-side ElevenLabs panel reads only the boolean `configured` flag from `/status`.
 
 ## Entrypoints and structure
 - `packages/web/server/lib/tts/index.js`: Public entrypoint imported by `packages/web/server/index.js`.

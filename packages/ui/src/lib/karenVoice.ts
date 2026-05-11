@@ -218,6 +218,23 @@ export const fetchKarenElevenLabsStatus = async (): Promise<KarenElevenLabsStatu
   return response.json() as Promise<KarenElevenLabsStatus>;
 };
 
+// Lightweight "is ElevenLabs configured" probe used by playKarenEventAudio
+// to avoid firing speech/sound-effect requests at an unconfigured server on
+// every quiz failure or rollback. Cached for the session after the first
+// resolved answer. Failures fall back to "not configured".
+let karenElevenLabsConfiguredCache: Promise<boolean> | null = null;
+const isKarenElevenLabsConfigured = (): Promise<boolean> => {
+  if (karenElevenLabsConfiguredCache) return karenElevenLabsConfiguredCache;
+  karenElevenLabsConfiguredCache = fetchKarenElevenLabsStatus()
+    .then((status) => status.configured === true)
+    .catch(() => false);
+  return karenElevenLabsConfiguredCache;
+};
+
+export const __resetKarenElevenLabsConfiguredCacheForTesting = (): void => {
+  karenElevenLabsConfiguredCache = null;
+};
+
 export const fetchKarenElevenLabsVoices = async (): Promise<KarenElevenLabsVoice[]> => {
   const response = await fetch('/api/karen/elevenlabs/voices', {
     headers: { accept: 'application/json' },
@@ -241,10 +258,46 @@ export const fetchKarenElevenLabsUsage = async (): Promise<KarenElevenLabsUsage>
   return response.json() as Promise<KarenElevenLabsUsage>;
 };
 
+// In-memory session cache keyed by hash(endpoint + payload). Saves us from
+// re-asking the server (and the server from re-billing ElevenLabs) when the
+// same Karen line plays multiple times in a session.
+const karenAudioBlobCache = new Map<string, { blob: Blob; characterCost?: string }>();
+
+const stableStringify = (value: unknown): string => {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, v]) => v !== undefined)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([k, v]) => `${JSON.stringify(k)}:${stableStringify(v)}`);
+  return `{${entries.join(',')}}`;
+};
+
+const hashKarenAudioKey = (endpoint: string, payload: unknown): string => {
+  // Fast non-crypto FNV-1a 32-bit hash. Good enough for a session-scoped key.
+  const input = `${endpoint}::${stableStringify(payload)}`;
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < input.length; index += 1) {
+    hash ^= input.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16);
+};
+
 const postKarenElevenLabsAudio = async (
   endpoint: '/api/karen/elevenlabs/speech' | '/api/karen/elevenlabs/sound-effect',
   payload: unknown,
 ): Promise<{ blob: Blob; characterCost?: string; cacheHit?: boolean; usage?: Partial<KarenElevenLabsUsage> }> => {
+  const cacheKey = hashKarenAudioKey(endpoint, payload);
+  const cached = karenAudioBlobCache.get(cacheKey);
+  if (cached) {
+    return {
+      blob: cached.blob,
+      characterCost: cached.characterCost,
+      cacheHit: true,
+    };
+  }
+
   const response = await fetch(endpoint, {
     method: 'POST',
     headers: {
@@ -259,9 +312,13 @@ const postKarenElevenLabsAudio = async (
     throw new Error(errorPayload.error || `ElevenLabs audio failed (${response.status})`);
   }
 
+  const blob = await response.blob();
+  const characterCost = response.headers.get('x-elevenlabs-character-cost') || undefined;
+  karenAudioBlobCache.set(cacheKey, { blob, characterCost });
+
   return {
-    blob: await response.blob(),
-    characterCost: response.headers.get('x-elevenlabs-character-cost') || undefined,
+    blob,
+    characterCost,
     cacheHit: response.headers.get('x-karen-audio-cache') === 'hit',
     usage: {
       day: response.headers.get('x-karen-audio-usage-day') || undefined,
@@ -271,15 +328,38 @@ const postKarenElevenLabsAudio = async (
   };
 };
 
+export const __clearKarenAudioCacheForTesting = (): void => {
+  karenAudioBlobCache.clear();
+};
+
+export const getKarenAudioCacheKeyForTesting = (
+  endpoint: '/api/karen/elevenlabs/speech' | '/api/karen/elevenlabs/sound-effect',
+  payload: unknown,
+): string => hashKarenAudioKey(endpoint, payload);
+
 let currentKarenAudio: HTMLAudioElement | null = null;
 
 export const playKarenAudioBlob = async (blob: Blob): Promise<void> => {
+  if (typeof window === 'undefined' || typeof URL?.createObjectURL !== 'function') {
+    return;
+  }
   const url = URL.createObjectURL(blob);
   const audio = new Audio(url);
   currentKarenAudio?.pause();
   currentKarenAudio = audio;
   try {
-    await audio.play();
+    try {
+      await audio.play();
+    } catch (error) {
+      // Autoplay blocked (NotAllowedError) or aborted by a newer playback
+      // (AbortError). Both should silently degrade — Karen is comic relief,
+      // not a critical UI path. Surface other errors through the caller.
+      const name = (error as Error)?.name;
+      if (name === 'NotAllowedError' || name === 'AbortError') {
+        return;
+      }
+      throw error;
+    }
     await new Promise<void>((resolve, reject) => {
       audio.onended = () => resolve();
       audio.onerror = () => reject(new Error('Audio playback failed.'));
@@ -481,13 +561,20 @@ export const playKarenEventAudio = async (
 
   try {
     if (settings.provider === 'elevenlabs' && !settings.elevenLabsDemoMode) {
-      if (shouldPlaySfx) {
-        await playKarenSoundEffect(config.sfx, { durationSeconds: 1.1, promptInfluence: 0.35 });
+      // Only fire ElevenLabs traffic when the server says it is configured.
+      // Otherwise quiz/event audio would generate a 503 for every event and
+      // spam the console. Silently degrade to the browser path instead.
+      const configured = await isKarenElevenLabsConfigured();
+      if (configured) {
+        if (shouldPlaySfx) {
+          await playKarenSoundEffect(config.sfx, { durationSeconds: 1.1, promptInfluence: 0.35 });
+        }
+        if (shouldPlayVoice) {
+          return speakKarenElevenLabsPreview(config.line, settings);
+        }
+        return { ok: true, usedProvider: 'elevenlabs' };
       }
-      if (shouldPlayVoice) {
-        return speakKarenElevenLabsPreview(config.line, settings);
-      }
-      return { ok: true, usedProvider: 'elevenlabs' };
+      // Fall through to the browser path below.
     }
 
     if (shouldPlaySfx) {

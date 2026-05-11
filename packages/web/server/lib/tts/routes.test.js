@@ -163,6 +163,41 @@ describe('tts routes', () => {
     });
   });
 
+  it('never echoes the ElevenLabs API key in status, usage, voices, or error responses', async () => {
+    const secret = 'sk-test-elevenlabs-secret-do-not-leak';
+    process.env.ELEVENLABS_API_KEY = secret;
+    process.env.OPENCHAMBER_DATA_DIR = createTempDataDir();
+    process.env.KAREN_AUDIO_DEMO_MODE = '0';
+
+    // Make /voices fail so we cover the error path too.
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: false,
+      status: 401,
+      text: async () => 'unauthorized',
+    })));
+
+    const app = createApp();
+
+    const status = await request(app).get('/api/karen/elevenlabs/status');
+    expect(status.status).toBe(200);
+    expect(JSON.stringify(status.body)).not.toContain(secret);
+    expect(status.body.secretEnvVar).toBe('ELEVENLABS_API_KEY');
+
+    const usage = await request(app).get('/api/karen/elevenlabs/usage');
+    expect(usage.status).toBe(200);
+    expect(JSON.stringify(usage.body)).not.toContain(secret);
+
+    const voices = await request(app).get('/api/karen/elevenlabs/voices');
+    expect(voices.status).toBe(401);
+    expect(JSON.stringify(voices.body)).not.toContain(secret);
+
+    // Forcing a generic speech error path too.
+    const speech = await request(app)
+      .post('/api/karen/elevenlabs/speech')
+      .send({ text: 'leak check', voiceId: 'voice_test' });
+    expect(JSON.stringify(speech.body)).not.toContain(secret);
+  });
+
   it('blocks fresh Karen ElevenLabs audio when the daily cap would be exceeded', async () => {
     process.env.ELEVENLABS_API_KEY = 'test-elevenlabs-key';
     process.env.OPENCHAMBER_DATA_DIR = createTempDataDir();
