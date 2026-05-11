@@ -6,14 +6,6 @@ import { LiveLeaderboardShowcase, type LiveLeaderboardDeveloper, type LiveLeader
 import { BadPromptGraveyard } from '../BadPromptGraveyard';
 import { KarenShameTweetWall } from './KarenShameTweetWall';
 
-const EMAIL_PATTERN = /^([^\s@]+)@([^\s@]+\.[^\s@]+)$/;
-
-const scrubEmail = (value: string): string => {
-  const match = EMAIL_PATTERN.exec(value);
-  if (!match) return value;
-  return `${match[1]}@***`;
-};
-
 const timeAgo = (value: number) => {
   if (!Number.isFinite(value)) return 'unknown';
   const seconds = Math.max(0, Math.round((Date.now() - value) / 1000));
@@ -39,7 +31,7 @@ const statusForProfile = (profile: PromptCourtProfile): LiveLeaderboardDeveloper
 
 const developerFromProfile = (profile: PromptCourtProfile, index: number): LiveLeaderboardDeveloper => ({
   id: profile.user.username,
-  name: scrubEmail(profile.user.displayName || profile.user.username),
+  name: profile.user.displayName || profile.user.username,
   handle: profile.user.username,
   promptScore: profile.stats.disciplineScore,
   quizPassRate: profile.stats.quizPassRate,
@@ -97,42 +89,32 @@ export const Scoreboard: React.FC<{ overview?: PromptCourtOverview | null }> = (
   const { developers, events, posts, hasLiveData } = React.useMemo(() => landingDataFromOverview(overview), [overview]);
 
   return (
-    <div className="min-h-screen bg-[#0d0b09] text-[#f6f2e8]">
-      <div className="mx-auto grid max-w-7xl gap-10 px-4 py-16 sm:px-6 sm:py-20 lg:px-8">
-        <header className="max-w-3xl">
-          <div className="inline-flex items-center gap-2 font-mono text-[10px] font-semibold uppercase tracking-[0.22em] text-[#7a6e60]">
-            <span className="h-px w-6 bg-[#3a322b]" />
-            public scoreboard
-          </div>
-          <h2 className="mt-3 font-serif text-4xl font-semibold leading-tight tracking-tight text-[#f6f2e8] sm:text-5xl">
-            We keep score. We name and shame.
-          </h2>
-          <p className="mt-4 max-w-2xl text-base leading-7 text-[#c9bca8] sm:text-lg">
-            If you fail the read check, the court records it. The feed calls out what you missed and who missed it.
-            {!hasLiveData ? (
-              <span className="mt-2 block font-mono text-xs uppercase tracking-[0.16em] text-[#7a6e60]">
-                no public sessions synced yet · showing preview data
-              </span>
-            ) : null}
-          </p>
-        </header>
+    <div className="mx-auto grid max-w-7xl gap-8 px-4 py-10 sm:px-6 lg:px-8">
+      <div>
+        <div className="font-mono text-xs font-semibold uppercase tracking-[0.18em] text-[#6f6f6f]">public scoreboard</div>
+        <h2 className="mt-3 text-4xl font-semibold tracking-normal sm:text-5xl">
+          We keep score. We name and shame.
+        </h2>
+        <p className="mt-4 max-w-3xl text-lg leading-8 text-[#4d4d4d]">
+          If you fail the read check, the court records it. The feed calls out what you missed and who missed it.
+        </p>
+      </div>
 
-        <LiveLeaderboardShowcase
-          developers={developers}
-          events={events}
-          live={isKarenCloudConfigured}
-          allowPreviewData={!hasLiveData}
-          updatedLabel={hasLiveData ? 'karen.overview live' : 'preview data'}
-          title={hasLiveData ? 'Live leaderboard for people who read the diff.' : 'Leaderboard ready for first public run.'}
-          subtitle={hasLiveData ? 'PromptCourt standings pulled from Convex public records.' : 'Convex is configured but no public sessions are synced yet.'}
-        />
+      <LiveLeaderboardShowcase
+        developers={developers}
+        events={events}
+        live={isKarenCloudConfigured}
+        allowPreviewData={!hasLiveData}
+        updatedLabel={hasLiveData ? 'karen.overview live' : 'no public records yet'}
+        title={hasLiveData ? 'Live leaderboard for people who read the diff.' : 'Leaderboard ready for first public run.'}
+        subtitle={hasLiveData ? 'PromptCourt standings are pulled from Convex public records.' : 'Convex is configured but no public sessions are synced yet.'}
+      />
 
-        <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
-          <div className="rounded-md border border-[#2a2521] bg-[#0a0907] p-4">
-            <BadPromptGraveyard posts={posts} limit={4} title="Latest public prompt charges" />
-          </div>
-          <KarenShameTweetWall />
+      <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
+        <div className="rounded-md border border-[#d8d8d8] bg-white p-4">
+          <BadPromptGraveyard posts={posts} limit={4} title="Latest public prompt charges" />
         </div>
+        <KarenShameTweetWall />
       </div>
     </div>
   );

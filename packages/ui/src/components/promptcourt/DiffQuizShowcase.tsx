@@ -58,6 +58,15 @@ const optionTone: Record<QuizOption['id'], string> = {
   D: 'border-[#22c55e] bg-[#22c55e] text-[#17130f] shadow-[5px_5px_0_#14532d]',
 };
 
+const codeLines = [
+  '- return allowSession(session)',
+  '+ if (isExpired(session)) return denySession()',
+  '+ auditTrail.record("session_rejected")',
+  '+ return allowSession(session)',
+];
+
+const clampCountdown = (value: number) => Math.max(0, Math.min(7, value));
+
 const useKahootMusic = (enabled: boolean) => {
   React.useEffect(() => {
     if (!enabled || typeof window === 'undefined') return undefined;
@@ -109,10 +118,10 @@ export const DiffQuizShowcase: React.FC<{
 }) => {
   const [roundIndex, setRoundIndex] = React.useState(0);
   const [countdown, setCountdown] = React.useState(7);
-  const [, setScore] = React.useState(0);
-  const [, setStreak] = React.useState(2);
+  const [score, setScore] = React.useState(0);
+  const [streak, setStreak] = React.useState(2);
   const [skipTokens, setSkipTokens] = React.useState(0);
-  const [soundEnabled] = React.useState(false);
+  const [soundEnabled, setSoundEnabled] = React.useState(false);
   const [selectedId, setSelectedId] = React.useState<QuizOption['id'] | null>(null);
   const [rollback, setRollback] = React.useState(false);
   const [celebrating, setCelebrating] = React.useState(false);
@@ -122,6 +131,7 @@ export const DiffQuizShowcase: React.FC<{
   const activeRounds = roundsProp?.length ? roundsProp : rounds;
   const round = activeRounds[roundIndex % activeRounds.length];
   const isLocked = selectedId !== null || rollback || celebrating;
+  const countdownRatio = clampCountdown(countdown) / 7;
 
   React.useEffect(() => {
     if (isLocked) return undefined;

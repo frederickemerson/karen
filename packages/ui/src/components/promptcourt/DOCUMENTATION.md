@@ -36,19 +36,15 @@ Make Karen's records public, glanceable, and arcade-shaped. Convert PromptCourt'
 - [`ProofProfileCard.tsx`](ProofProfileCard.tsx) - single-card public profile summary, used standalone and inside the live page.
 - [`DeleteOrDefend.tsx`](DeleteOrDefend.tsx) - interactive challenge mini-game where users decide to keep or roll back a generated diff under time pressure.
 - [`GrandmaVoicePanel.tsx`](GrandmaVoicePanel.tsx) - settings panel for the Karen voice (mood, ElevenLabs voice id, server-side TTS proxy info, preview). Persists settings to `localStorage` under `KAREN_VOICE_STORAGE_KEY`.
-- [`landing/Home.tsx`](landing/Home.tsx) - long-scroll landing page. Composes hero, problem compare, how-it-works, pipeline strip, commit interrupt, scoreboard preview, shame wall, install, grandma voice teaser, and footer. Dark courtroom-terminal aesthetic.
-- [`landing/HowItWorks.tsx`](landing/HowItWorks.tsx) - four-step pipeline block (charge, sandbox, quiz, verdict) with monospace snippets, embedded as a section of `Home`.
-- [`landing/Scoreboard.tsx`](landing/Scoreboard.tsx) - `/scoreboard` route combining `LiveLeaderboardShowcase`, `BadPromptGraveyard`, and `KarenShameTweetWall`. Falls back to preview data when Convex returns nothing.
-- [`landing/Install.tsx`](landing/Install.tsx) - install panel with curl/bun/npm tabs, click-to-copy commands, and a common commands sidebar. Embedded into both `Home` and the `/install` route.
-- [`landing/KarenPipelineStrip.tsx`](landing/KarenPipelineStrip.tsx) - five-card animated pipeline (prompt -> court -> worktree -> quiz -> verdict).
-- [`landing/KarenCommitInterrupt.tsx`](landing/KarenCommitInterrupt.tsx) - terminal frame showing `git commit` being interrupted by Karen, handing off to `DiffQuizShowcase`.
+- [`landing/Home.tsx`](landing/Home.tsx) - home route hero page with the confrontational pitch and mascot.
+- [`landing/HowItWorks.tsx`](landing/HowItWorks.tsx) - route showing the pipeline strip, prompt judge examples, and commit-interrupt quiz.
+- [`landing/Scoreboard.tsx`](landing/Scoreboard.tsx) - route combining `LiveLeaderboardShowcase`, `BadPromptGraveyard`, and `KarenShameTweetWall`.
+- [`landing/Install.tsx`](landing/Install.tsx) - route with install commands and CTA.
+- [`landing/KarenPipelineStrip.tsx`](landing/KarenPipelineStrip.tsx) - concise visual flow from prompt to verdict.
+- [`landing/KarenCommitInterrupt.tsx`](landing/KarenCommitInterrupt.tsx) - TaskMaster commit frame and quiz handoff.
 - [`landing/KarenShameTweetWall.tsx`](landing/KarenShameTweetWall.tsx) - mock `@karen-code` X-style shame feed for landing storytelling.
-- [`landing/karenShameTweets.ts`](landing/karenShameTweets.ts) - deterministic mock tweet records with PC- charge codes.
-- [`landing/LandingAuthCta.tsx`](landing/LandingAuthCta.tsx) - shared auth/CTA element used by the landing nav. Restyled for the dark header.
-- [`landing/HeroVerdict.tsx`](landing/HeroVerdict.tsx) - rotating terminal-style verdict card used as the hero visual; cycles through real-looking blocked / probation / approved prompts every ~4 seconds.
-- [`landing/ProblemPromptCompare.tsx`](landing/ProblemPromptCompare.tsx) - side-by-side bad vs accepted prompt example block for the "problem" section.
-- [`landing/GrandmaVoiceTeaser.tsx`](landing/GrandmaVoiceTeaser.tsx) - small voice teaser with a browser-`speechSynthesis` preview button and a lazy-loaded `GrandmaVoicePanel` for advanced controls.
-- [`landing/LandingFooter.tsx`](landing/LandingFooter.tsx) - landing-page footer with GitHub, docs, and scoreboard links.
+- [`landing/karenShameTweets.ts`](landing/karenShameTweets.ts) - deterministic mock tweet records.
+- [`landing/LandingAuthCta.tsx`](landing/LandingAuthCta.tsx) - shared auth/CTA element used by the landing nav.
 
 ## Contract
 
