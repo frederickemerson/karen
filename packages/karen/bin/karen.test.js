@@ -379,7 +379,7 @@ describe('Karen OpenCode hook adapter boundary', () => {
 
     expect(selectOpenCodeInterceptionStrategy({
       upstream: null,
-      env: { KAREN_OPENCODE_HOOK: 'required' },
+      env: { KAREN_OPENCODE_HOOK_MODE: 'required' },
     })).toMatchObject({
       strategy: openCodeHookStrategies.UNAVAILABLE_STRATEGY,
       canFallbackToPty: false,

@@ -4,6 +4,7 @@ const DISABLED_STRATEGY = 'disabled';
 const UNAVAILABLE_STRATEGY = 'unavailable';
 
 const VALID_MODES = new Set(['auto', 'required', 'disabled', 'pty']);
+const HOOK_DISABLE_TOKENS = new Set(['0', 'false', 'off', 'disabled']);
 
 const envEnabled = (value, defaultValue = true) => {
   if (value == null || value === '') return defaultValue;
@@ -16,12 +17,20 @@ const normalizeHookMode = (value) => {
 };
 
 export const readOpenCodeHookConfig = ({ env = process.env, config = {} } = {}) => {
-  const mode = normalizeHookMode(
+  let mode = normalizeHookMode(
     env.KAREN_OPENCODE_HOOK_MODE
-    || env.KAREN_OPENCODE_HOOK
     || config.mode
     || 'auto',
   );
+
+  // KAREN_OPENCODE_HOOK is a boolean shortcut; only disable tokens override mode.
+  const hookShortcut = env.KAREN_OPENCODE_HOOK;
+  if (hookShortcut != null && hookShortcut !== '') {
+    const token = String(hookShortcut).trim().toLowerCase();
+    if (HOOK_DISABLE_TOKENS.has(token)) {
+      mode = 'disabled';
+    }
+  }
 
   return {
     mode,
@@ -204,8 +213,22 @@ export const normalizeOpenCodePromptEvent = (event, { source = 'opencode-hook' }
   };
 };
 
+const activeRegistrations = new Set();
+
+const resolveDispose = (result, logger) => {
+  if (typeof result === 'function') return result;
+  const candidate = result?.dispose || result?.unsubscribe;
+  if (typeof candidate === 'function') return candidate.bind(result);
+  logger.warn(
+    'Karen opencode hook: register() did not return a dispose function; using no-op. '
+    + 'Upstream hook leakage may occur on shutdown.',
+  );
+  return () => {};
+};
+
 export const createOpenCodeHookAdapter = ({ upstream = null, env = process.env, config = {} } = {}) => {
   const decision = selectOpenCodeInterceptionStrategy({ upstream, env, config });
+  const logger = config.logger || console;
 
   return {
     ...decision,
@@ -221,24 +244,46 @@ export const createOpenCodeHookAdapter = ({ upstream = null, env = process.env, 
       }
 
       const register = decision.support.registration.register;
+      const registrationKey = decision.support.registration.path;
+      if (activeRegistrations.has(registrationKey)) {
+        throw new Error(
+          `Karen opencode hook: attachPromptGuard() already registered for "${registrationKey}". `
+          + 'Dispose the previous registration before attaching again.',
+        );
+      }
+
       const registrationResult = register(async (event, context = {}) => {
         const normalized = normalizeOpenCodePromptEvent(event);
         if (!normalized) return { action: 'pass' };
         return onPrompt(normalized, context);
       });
 
-      const dispose = typeof registrationResult === 'function'
-        ? registrationResult
-        : registrationResult?.dispose || registrationResult?.unsubscribe || (() => {});
+      const rawDispose = resolveDispose(registrationResult, logger);
+      activeRegistrations.add(registrationKey);
+      let disposed = false;
+      const dispose = () => {
+        if (disposed) return;
+        disposed = true;
+        activeRegistrations.delete(registrationKey);
+        try {
+          rawDispose();
+        } catch (error) {
+          logger.warn(`Karen opencode hook: dispose threw: ${error?.message || error}`);
+        }
+      };
 
       return {
         attached: true,
         strategy: decision.strategy,
-        registrationPath: decision.support.registration.path,
+        registrationPath: registrationKey,
         dispose,
       };
     },
   };
+};
+
+export const __resetOpenCodeHookRegistrationsForTests = () => {
+  activeRegistrations.clear();
 };
 
 export const openCodeHookStrategies = {
