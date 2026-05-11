@@ -7,7 +7,10 @@
   "cleanUrls": true,
   "trailingSlash": false,
   "rewrites": [
-    { "source": "/((?!.*\\.).*)", "destination": "/index.html" }
+    { "source": "/install", "destination": "/index.html" },
+    { "source": "/install/:rest*", "destination": "/index.html" },
+    { "source": "/scoreboard", "destination": "/index.html" },
+    { "source": "/scoreboard/:rest*", "destination": "/index.html" }
   ],
   "headers": [
     {
