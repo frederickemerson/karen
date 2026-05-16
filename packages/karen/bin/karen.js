@@ -31,7 +31,6 @@ import {
   printStreakBar,
   printShameStamp,
   printProfileBarb,
-  printGoodbye,
   pickGoodbye,
   sorryReply,
   pleaseReply,
@@ -1464,7 +1463,7 @@ const main = async () => {
   const handleInterrupt = () => {
     line('');
     cleanupAllWorktreesNow();
-    line(color(printGoodbye(pickGoodbye({})), 'gray'));
+    line(color(pickGoodbye('default'), 'gray'));
     process.exit(0);
   };
   rl.on('SIGINT', handleInterrupt);
