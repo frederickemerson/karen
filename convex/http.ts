@@ -163,7 +163,18 @@ http.route({
       return json({ ok: false, error: 'start_failed', message: String(err?.message ?? err) }, 500);
     }
 
-    const baseVerifyUrl = process.env.KAREN_CLOUD_LINK_URL || 'https://karen.buglerock.asia/link';
+    const baseVerifyUrl = process.env.KAREN_CLOUD_LINK_URL;
+    if (!baseVerifyUrl) {
+      return json(
+        {
+          ok: false,
+          error: 'link_url_not_configured',
+          message:
+            'KAREN_CLOUD_LINK_URL is not set in the Convex deployment. Set it to the public URL of the /link page (for example https://your-app.vercel.app/link) before karen login can start a device flow.',
+        },
+        500,
+      );
+    }
     return json({
       deviceCode,
       userCode,

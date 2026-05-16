@@ -136,7 +136,7 @@ Wire shape:
 
 The shared-secret bearer (`KAREN_CLOUD_INGEST_SECRET`) still works on `/karen/ingest` for the Express server-to-server path. The route tries the secret first, then falls back to device-token verification.
 
-`KAREN_CLOUD_LINK_URL` (optional) controls the `verificationUri` returned to the TUI. Defaults to `https://karen.buglerock.asia/link`.
+`KAREN_CLOUD_LINK_URL` (REQUIRED) controls the `verificationUri` returned to the TUI. Set it to the public URL of the `/link` page on your deployment (for example `https://your-app.vercel.app/link`). If unset, `/karen/auth/device/start` returns HTTP 500 with `error: link_url_not_configured`.
 
 ## Wipe placeholders
 
@@ -146,14 +146,14 @@ A one-shot operator migration nukes every `users` row whose `clerkUserId` starts
 # Dry run
 curl -sX POST "$CONVEX_SITE_URL/karen/admin/wipe-placeholders" \
   -H "Authorization: Bearer $KAREN_CLOUD_INGEST_SECRET" \
-  -H "x-karen-admin-actor: ops@buglerock.asia" \
+  -H "x-karen-admin-actor: ops@example.com" \
   -H "content-type: application/json" \
   -d '{"dryRun": true}'
 
 # Real wipe
 curl -sX POST "$CONVEX_SITE_URL/karen/admin/wipe-placeholders" \
   -H "Authorization: Bearer $KAREN_CLOUD_INGEST_SECRET" \
-  -H "x-karen-admin-actor: ops@buglerock.asia" \
+  -H "x-karen-admin-actor: ops@example.com" \
   -H "content-type: application/json" \
   -d '{}'
 ```
