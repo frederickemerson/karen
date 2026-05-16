@@ -9,6 +9,20 @@ import {
   karenRewriteFor,
   karenVerdictLine,
 } from '@/lib/karenCopy';
+import { moodForScore } from '@/lib/karenWebVoice';
+import { SpeakerButton } from './SpeakerButton';
+
+// Build the line Karen reads for a buried-prompt card. Mirrors the TUI's
+// 'prompt-blocked' / 'quiz-wrong' cues. Short — 240ish chars — so ElevenLabs
+// stays cheap and the cache key is stable per post id.
+const karenPostLine = (post: PromptCourtPublicPost): string => {
+  const score = Number.isFinite(post.score) ? Number(post.score) : 0;
+  const reasons = (post.failureReasons || []).slice(0, 2).map((r) => r.replace(/\.$/, '')).join('. ');
+  const opener = post.type === 'quiz_failed'
+    ? `Quiz failed. ${score} out of one hundred.`
+    : `Karen blocked at ${score} out of one hundred.`;
+  return reasons ? `${opener} ${reasons}.` : opener;
+};
 
 type BadPromptGraveyardProps = {
   posts: PromptCourtPublicPost[];
@@ -91,6 +105,13 @@ const GraveyardCard = ({ post }: { post: PromptCourtPublicPost }) => {
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <span className={scoreToneClass(tone)}>{score}/100</span>
+          <SpeakerButton
+            text={karenPostLine(post)}
+            mood={moodForScore(score)}
+            cacheKey={`post:${post.id}`}
+            label="Hear Karen"
+            compact
+          />
           <ShareButton post={post} />
         </div>
       </div>

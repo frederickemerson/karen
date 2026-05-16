@@ -193,4 +193,19 @@ export default defineSchema({
     windowStart: v.number(),
     lockedUntil: v.optional(v.number()),
   }).index('by_key', ['key']),
+
+  // Cache for /karen/voice/synthesize. Content-hashed so identical lines
+  // across users / posts collapse to one ElevenLabs call. The audio MP3 lives
+  // in Convex's built-in file storage, addressed by `storageId`.
+  voiceCacheEntries: defineTable({
+    contentHash: v.string(),
+    storageId: v.id('_storage'),
+    voiceId: v.string(),
+    mood: v.optional(v.string()),
+    textPreview: v.string(),
+    byteSize: v.number(),
+    createdAt: v.number(),
+    lastHitAt: v.number(),
+    hits: v.number(),
+  }).index('by_hash', ['contentHash']),
 });

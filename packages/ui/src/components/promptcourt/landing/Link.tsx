@@ -11,6 +11,7 @@ import { useMutation } from 'convex/react';
 
 import { api } from '../../../../../../convex/_generated/api';
 import { KarenMascot } from '../KarenMascot';
+import { SpeakerButton } from '../SpeakerButton';
 import { isKarenAuthConfigured } from '../../../lib/karenCloudConfig';
 
 // Rendered when VITE_CLERK_PUBLISHABLE_KEY is missing at build time. Without the
@@ -199,6 +200,12 @@ const SignedInPanel: React.FC<{ code: string | null }> = ({ code }) => {
               >
                 Open scoreboard
               </RouterLink>
+              <SpeakerButton
+                text={`${state.username || handle}. Karen has filed you under pending.`}
+                mood="standard"
+                cacheKey={`login-success:${state.username || handle}`}
+                label="Hear Karen welcome you"
+              />
             </div>
           </>
         ) : null}

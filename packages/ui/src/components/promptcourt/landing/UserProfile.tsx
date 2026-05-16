@@ -10,6 +10,25 @@ import { KarenMascot } from '../KarenMascot';
 import { ProofProfileCard } from '../ProofProfileCard';
 import { KarenBadgeWall } from '../KarenBadgeWall';
 import { BadPromptGraveyard } from '../BadPromptGraveyard';
+import { SpeakerButton } from '../SpeakerButton';
+import { moodForScore } from '../../../lib/karenWebVoice';
+
+// Build a Karen-voice line for a profile read. Lines mirror the TUI's
+// `profile-read` cue pool but parameterised by the visited user. We hash the
+// score by 5-point buckets so similar scores share a cache entry.
+const karenProfileLine = (username: string, stats: PromptCourtProfile['stats']): string => {
+  const score = Math.round(Number(stats.disciplineScore) || 0);
+  const streak = Number(stats.currentStreak) || 0;
+  if (score >= 80) return `${username}. ${score} out of one hundred. Karen is reluctantly proud.`;
+  if (score >= 50) {
+    if (streak >= 7) return `${username}. ${score} out of one hundred, ${streak} day streak. Acceptable.`;
+    return `${username}. ${score} out of one hundred. Acceptable, for now.`;
+  }
+  if (Number(stats.publicFailureCount) > 0) {
+    return `${username}. ${score} out of one hundred. Karen has notes. Lots of them.`;
+  }
+  return `${username}. ${score} out of one hundred. Karen has notes.`;
+};
 
 type PublicProfileResult = (PromptCourtProfile & {
   user: PromptCourtProfile['user'] & {
@@ -167,8 +186,19 @@ export const UserProfile: React.FC = () => {
         )}
       </section>
 
-      <section>
+      <section className="flex flex-col gap-4">
         <ProofProfileCard profile={profile} />
+        <div className="flex flex-wrap items-center gap-3">
+          <SpeakerButton
+            text={karenProfileLine(user.username, stats)}
+            mood={moodForScore(stats.disciplineScore)}
+            cacheKey={`profile:${user.username}:${Math.round(stats.disciplineScore / 5) * 5}`}
+            label="Hear Karen's verdict"
+          />
+          <span className="font-mono text-[11px] text-[#6f6f6f]">
+            Karen reads {`@${user.username}`}&apos;s record aloud.
+          </span>
+        </div>
       </section>
 
       <section className="grid gap-4 sm:grid-cols-3">

@@ -383,4 +383,177 @@ http.route({
   }),
 });
 
+// ---------------------------------------------------------------------------
+// Voice synthesis endpoint for the Vercel landing.
+// Public (no auth), per-IP rate-limited, content-hash cached in Convex file
+// storage. The browser calls POST with { text, voiceId?, mood?, cacheKey? }
+// and gets audio/mpeg back.
+// ---------------------------------------------------------------------------
+
+const VOICE_ALLOWED_ORIGINS = (process.env.KAREN_VOICE_ALLOWED_ORIGINS || '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+const corsHeaders = (request: Request): Record<string, string> => {
+  const origin = request.headers.get('origin') || '';
+  let allow = '*';
+  if (VOICE_ALLOWED_ORIGINS.length > 0) {
+    allow = VOICE_ALLOWED_ORIGINS.includes(origin) ? origin : VOICE_ALLOWED_ORIGINS[0];
+  }
+  return {
+    'access-control-allow-origin': allow,
+    'access-control-allow-methods': 'POST, OPTIONS',
+    'access-control-allow-headers': 'content-type',
+    'access-control-max-age': '86400',
+    'vary': 'origin',
+  };
+};
+
+http.route({
+  path: '/karen/voice/synthesize',
+  method: 'OPTIONS',
+  handler: httpAction(async (_ctx, request) => new Response(null, {
+    status: 204,
+    headers: corsHeaders(request),
+  })),
+});
+
+http.route({
+  path: '/karen/voice/synthesize',
+  method: 'POST',
+  handler: httpAction(async (ctx, request) => {
+    const apiKey = process.env.ELEVENLABS_API_KEY;
+    if (!apiKey) {
+      return new Response(
+        JSON.stringify({ ok: false, error: 'voice_not_configured', message: 'ELEVENLABS_API_KEY is not set in the Convex deployment.' }),
+        { status: 503, headers: { 'content-type': 'application/json', ...corsHeaders(request) } },
+      );
+    }
+
+    const body = await request.json().catch(() => null) as null | {
+      text?: string;
+      voiceId?: string;
+      mood?: string;
+      cacheKey?: string;
+    };
+    if (!body || typeof body.text !== 'string') {
+      return new Response(
+        JSON.stringify({ ok: false, error: 'invalid_body' }),
+        { status: 400, headers: { 'content-type': 'application/json', ...corsHeaders(request) } },
+      );
+    }
+    const rawText = body.text.trim();
+    if (rawText.length === 0 || rawText.length > 280) {
+      return new Response(
+        JSON.stringify({ ok: false, error: 'text_length_invalid', limit: 280 }),
+        { status: 400, headers: { 'content-type': 'application/json', ...corsHeaders(request) } },
+      );
+    }
+
+    // Per-IP rate limit. 30 requests per 5 minutes; on overflow we lock the IP
+    // out for the rest of the window. Falls back to a `no-ip` bucket if the
+    // edge didn't tell us where the request came from.
+    const ip = request.headers.get('x-forwarded-for')?.split(',')[0].trim()
+      || request.headers.get('cf-connecting-ip')
+      || request.headers.get('x-real-ip')
+      || 'no-ip';
+    const rl = await ctx.runMutation(internal.karen.checkVoiceRateLimit, {
+      key: `voice:${ip}`,
+      maxPerWindow: 30,
+      windowMs: 5 * 60 * 1000,
+    });
+    if (!rl.ok) {
+      return new Response(
+        JSON.stringify({ ok: false, error: 'rate_limited', retryAfterMs: rl.retryAfterMs }),
+        { status: 429, headers: { 'content-type': 'application/json', ...corsHeaders(request) } },
+      );
+    }
+
+    const voiceId = (typeof body.voiceId === 'string' && body.voiceId.length < 64)
+      ? body.voiceId
+      : (process.env.KAREN_VOICE_DEFAULT_ID || 'z9fAnlkpzviPz146aGWa');
+    const mood = (typeof body.mood === 'string' && ['angry', 'standard', 'deadpan'].includes(body.mood))
+      ? body.mood
+      : 'standard';
+    const voiceSettings = {
+      angry:    { stability: 0.42, similarity_boost: 0.78, style: 0.65, use_speaker_boost: true, speed: 1.00 },
+      standard: { stability: 0.55, similarity_boost: 0.78, style: 0.55, use_speaker_boost: true, speed: 0.88 },
+      deadpan:  { stability: 0.82, similarity_boost: 0.78, style: 0.22, use_speaker_boost: true, speed: 0.85 },
+    }[mood as 'angry' | 'standard' | 'deadpan'];
+
+    const modelId = process.env.ELEVENLABS_MODEL_ID || 'eleven_flash_v2_5';
+    const contentHash = await sha256Hex(JSON.stringify({ rawText, voiceId, mood, modelId }));
+
+    // Cache hit?
+    const cached = await ctx.runQuery(internal.karen.findCachedVoice, { contentHash });
+    if (cached) {
+      void ctx.runMutation(internal.karen.bumpVoiceHits, { contentHash });
+      const blob = await ctx.storage.get(cached.storageId);
+      if (blob) {
+        return new Response(blob, {
+          status: 200,
+          headers: {
+            'content-type': 'audio/mpeg',
+            'cache-control': 'public, max-age=2592000, immutable',
+            'x-karen-voice-cache': 'hit',
+            ...corsHeaders(request),
+          },
+        });
+      }
+      // Stale row pointing at a deleted blob. Fall through and regenerate.
+    }
+
+    // Cache miss → call ElevenLabs.
+    let elevenResponse: Response;
+    try {
+      elevenResponse = await fetch(
+        `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}?output_format=mp3_44100_128`,
+        {
+          method: 'POST',
+          headers: {
+            'xi-api-key': apiKey,
+            'content-type': 'application/json',
+            accept: 'audio/mpeg',
+          },
+          body: JSON.stringify({ text: rawText, model_id: modelId, voice_settings: voiceSettings }),
+        },
+      );
+    } catch (err: any) {
+      return new Response(
+        JSON.stringify({ ok: false, error: 'elevenlabs_fetch_failed', message: String(err?.message || err) }),
+        { status: 502, headers: { 'content-type': 'application/json', ...corsHeaders(request) } },
+      );
+    }
+    if (!elevenResponse.ok) {
+      return new Response(
+        JSON.stringify({ ok: false, error: 'elevenlabs_error', status: elevenResponse.status }),
+        { status: 502, headers: { 'content-type': 'application/json', ...corsHeaders(request) } },
+      );
+    }
+
+    const audioBlob = await elevenResponse.blob();
+    const audioMp3 = new Blob([await audioBlob.arrayBuffer()], { type: 'audio/mpeg' });
+    const storageId = await ctx.storage.store(audioMp3);
+    await ctx.runMutation(internal.karen.recordVoiceCache, {
+      contentHash,
+      storageId,
+      voiceId,
+      mood,
+      textPreview: rawText,
+      byteSize: audioMp3.size,
+    });
+
+    return new Response(audioMp3, {
+      status: 200,
+      headers: {
+        'content-type': 'audio/mpeg',
+        'cache-control': 'public, max-age=2592000, immutable',
+        'x-karen-voice-cache': 'miss',
+        ...corsHeaders(request),
+      },
+    });
+  }),
+});
+
 export default http;

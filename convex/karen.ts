@@ -2014,3 +2014,99 @@ export const wipeLocalPlaceholders = internalMutation({
     return result;
   },
 });
+
+
+// ---------------------------------------------------------------------------
+// Voice synthesis cache (server-side ElevenLabs for Vercel-side audio).
+// Content-hashed: identical lines across users collapse to one MP3.
+// ---------------------------------------------------------------------------
+
+export const findCachedVoice = internalQuery({
+  args: { contentHash: v.string() },
+  handler: async (ctx, { contentHash }) => {
+    const row = await ctx.db
+      .query('voiceCacheEntries')
+      .withIndex('by_hash', (q) => q.eq('contentHash', contentHash))
+      .unique();
+    return row ?? null;
+  },
+});
+
+export const recordVoiceCache = internalMutation({
+  args: {
+    contentHash: v.string(),
+    storageId: v.id('_storage'),
+    voiceId: v.string(),
+    mood: v.optional(v.string()),
+    textPreview: v.string(),
+    byteSize: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    // Defensive: another request may have written the same hash concurrently.
+    const existing = await ctx.db
+      .query('voiceCacheEntries')
+      .withIndex('by_hash', (q) => q.eq('contentHash', args.contentHash))
+      .unique();
+    if (existing) {
+      await ctx.db.patch(existing._id, { hits: existing.hits + 1, lastHitAt: now });
+      // Drop the duplicate blob to save storage.
+      try { await ctx.storage.delete(args.storageId); } catch {}
+      return existing.storageId;
+    }
+    await ctx.db.insert('voiceCacheEntries', {
+      contentHash: args.contentHash,
+      storageId: args.storageId,
+      voiceId: args.voiceId,
+      mood: args.mood,
+      textPreview: args.textPreview.slice(0, 80),
+      byteSize: args.byteSize,
+      createdAt: now,
+      lastHitAt: now,
+      hits: 0,
+    });
+    return args.storageId;
+  },
+});
+
+export const bumpVoiceHits = internalMutation({
+  args: { contentHash: v.string() },
+  handler: async (ctx, { contentHash }) => {
+    const row = await ctx.db
+      .query('voiceCacheEntries')
+      .withIndex('by_hash', (q) => q.eq('contentHash', contentHash))
+      .unique();
+    if (!row) return null;
+    await ctx.db.patch(row._id, { hits: row.hits + 1, lastHitAt: Date.now() });
+    return row.storageId;
+  },
+});
+
+// Per-IP rate limit for the public voice endpoint. Reuses ipRateLimits table.
+export const checkVoiceRateLimit = internalMutation({
+  args: { key: v.string(), maxPerWindow: v.number(), windowMs: v.number() },
+  handler: async (ctx, { key, maxPerWindow, windowMs }) => {
+    const now = Date.now();
+    const row = await ctx.db
+      .query('ipRateLimits')
+      .withIndex('by_key', (q) => q.eq('key', key))
+      .unique();
+    if (row?.lockedUntil && row.lockedUntil > now) {
+      return { ok: false, retryAfterMs: row.lockedUntil - now };
+    }
+    if (!row || now - row.windowStart > windowMs) {
+      if (row) {
+        await ctx.db.patch(row._id, { count: 1, windowStart: now, lockedUntil: undefined });
+      } else {
+        await ctx.db.insert('ipRateLimits', { key, count: 1, windowStart: now });
+      }
+      return { ok: true };
+    }
+    if (row.count + 1 > maxPerWindow) {
+      await ctx.db.patch(row._id, { count: row.count + 1, lockedUntil: now + windowMs });
+      return { ok: false, retryAfterMs: windowMs };
+    }
+    await ctx.db.patch(row._id, { count: row.count + 1 });
+    return { ok: true };
+  },
+});
