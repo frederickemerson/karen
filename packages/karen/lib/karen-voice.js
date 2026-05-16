@@ -151,12 +151,50 @@ const configHome = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.conf
 const openchamberDataDir = path.join(configHome, 'openchamber');
 const audioCacheDir = () => process.env.KAREN_AUDIO_CACHE_DIR || path.join(openchamberDataDir, 'karen-audio-cache', 'terminal');
 const usagePath = () => path.join(openchamberDataDir, 'karen-elevenlabs-usage.json');
+const prefsPath = () => path.join(openchamberDataDir, 'karen-voice-prefs.json');
 const todayKey = () => new Date().toISOString().slice(0, 10);
 
 const envEnabled = (name, defaultValue = true) => {
   const value = process.env[name];
   if (value == null || value === '') return defaultValue;
   return !['0', 'false', 'off', 'no'].includes(String(value).trim().toLowerCase());
+};
+
+// Per-cue category. Per-prompt cues fire on every prompt the user enters and
+// can get annoying fast — off by default. "Moment" cues only fire on
+// one-time or user-triggered events and stay on regardless.
+const PER_PROMPT_CUES = new Set(['long-prompt', 'prompt-blocked', 'quiz-wrong', 'quiz-pass']);
+
+const readPrefs = () => {
+  try {
+    return JSON.parse(fs.readFileSync(prefsPath(), 'utf8')) || {};
+  } catch {
+    return {};
+  }
+};
+
+const writePrefs = (next) => {
+  try {
+    fs.mkdirSync(path.dirname(prefsPath()), { recursive: true });
+    const tmp = `${prefsPath()}.tmp`;
+    fs.writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`);
+    fs.renameSync(tmp, prefsPath());
+  } catch {}
+};
+
+export const isPerPromptVoiceEnabled = () => {
+  // Env override wins; otherwise the persisted pref; default off.
+  const envValue = process.env.KAREN_VOICE_PER_PROMPT;
+  if (envValue != null && envValue !== '') {
+    return !['0', 'false', 'off', 'no'].includes(String(envValue).trim().toLowerCase());
+  }
+  return Boolean(readPrefs().perPromptVoice);
+};
+
+export const setPerPromptVoice = (enabled) => {
+  const prefs = readPrefs();
+  prefs.perPromptVoice = Boolean(enabled);
+  writePrefs(prefs);
 };
 
 let sessionMuted = false;
@@ -367,7 +405,16 @@ const localSpeak = (text) => {
 // --- Public: play a cue ------------------------------------------------------
 
 export const playKarenLine = async (cue, ctx = {}, options = {}) => {
-  const { warmOnly = false, suppressCaption = false } = options;
+  const { warmOnly = false, suppressCaption = false, force = false } = options;
+
+  // Per-prompt cues are silent unless the user explicitly turned them on with
+  // /voice prompts on (or KAREN_VOICE_PER_PROMPT=1). One-time / user-triggered
+  // cues (startup, login, /sorry, profile-read, level-up, etc.) ignore this
+  // gate and fire whenever KAREN_AUDIO is on.
+  if (!force && PER_PROMPT_CUES.has(cue) && !isPerPromptVoiceEnabled()) {
+    return { text: '', source: 'per-prompt-disabled' };
+  }
+
   const text = pickLine(cue, ctx);
   if (!text) return null;
 
@@ -427,11 +474,12 @@ export const playKarenLine = async (cue, ctx = {}, options = {}) => {
 export const prewarmCommonLines = async (ctx) => {
   if (!elevenLabsAllowed()) return;
   if (voiceUsage().state !== 'ok') return;
+  if (!isPerPromptVoiceEnabled()) return; // no point warming silenced cues
   // Pre-fetch the cues a user is most likely to trigger in their first minute.
   await Promise.allSettled([
-    playKarenLine('prompt-blocked', ctx, { warmOnly: true }),
-    playKarenLine('quiz-pass', ctx, { warmOnly: true }),
-    playKarenLine('quiz-wrong', ctx, { warmOnly: true }),
+    playKarenLine('prompt-blocked', ctx, { warmOnly: true, force: true }),
+    playKarenLine('quiz-pass', ctx, { warmOnly: true, force: true }),
+    playKarenLine('quiz-wrong', ctx, { warmOnly: true, force: true }),
   ]);
 };
 
@@ -440,7 +488,8 @@ export const prewarmCommonLines = async (ctx) => {
 export const sampleRandomLine = async (ctx) => {
   const cues = Object.keys(POOLS).filter((cue) => cue !== 'budget-warning' && cue !== 'sample');
   const cue = cues[Math.floor(Math.random() * cues.length)];
-  await playKarenLine(cue, { ...ctx, name: ctx.name || ctx.username || 'you' });
+  // User explicitly asked for a sample — bypass the per-prompt gate.
+  await playKarenLine(cue, { ...ctx, name: ctx.name || ctx.username || 'you' }, { force: true });
   return cue;
 };
 

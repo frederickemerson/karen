@@ -32,6 +32,8 @@ import {
   getSessionVoiceId,
   sampleRandomLine,
   listVoiceCues,
+  isPerPromptVoiceEnabled,
+  setPerPromptVoice,
 } from '../lib/karen-voice.js';
 // withFileLock exported from karen-auth.js for wrapping settings.json read-modify-write;
 // not yet wired around ensureGuiProjectDirectory / writeDefaultModel / addTerminalAudioUsage.
@@ -1175,7 +1177,7 @@ const printHelp = () => {
   line('  /session         manage OpenCode sessions');
   line('  /stats           show token and cost stats');
   line('  /audio           show terminal audio controls');
-  line('  /voice           Karen voice controls (sample | mute | unmute | voice <id> | reset | usage | cues)');
+  line('  /voice           voice controls (sample | mute | unmute | voice <id> | reset | prompts on|off | usage)');
   line('  /login           link this device to a cloud profile (Clerk)');
   line('  /logout          forget the current cloud profile binding');
   line('  /sorry /please /karen   easter eggs');
@@ -1337,15 +1339,35 @@ const handleVoiceCommand = async (rest) => {
     for (const cue of listVoiceCues()) line(`  ${cue}`);
     return;
   }
+  if (sub === 'prompts') {
+    // /voice prompts [on|off|status] — toggle the per-prompt cues (long-prompt,
+    // prompt-blocked, quiz-wrong, quiz-pass). Persisted to ~/.config/openchamber/
+    // karen-voice-prefs.json so the setting survives across sessions.
+    const mode = (rest[1] || 'status').toLowerCase();
+    if (mode === 'on' || mode === 'true' || mode === '1' || mode === 'yes') {
+      setPerPromptVoice(true);
+      line(color('Per-prompt voice cues turned ON. Karen will speak on every verdict.', 'green'));
+    } else if (mode === 'off' || mode === 'false' || mode === '0' || mode === 'no') {
+      setPerPromptVoice(false);
+      line(color('Per-prompt voice cues turned OFF. Karen still talks on startup, /login, /sorry, /profile, etc.', 'amber'));
+    } else {
+      line(color(`Per-prompt voice cues: ${isPerPromptVoiceEnabled() ? 'ON' : 'OFF'}`, 'cyan'));
+      line(color('Toggle with: /voice prompts on | /voice prompts off', 'gray'));
+    }
+    return;
+  }
   // default: usage
   const u = voiceUsage();
   line(color('Karen voice', 'cyan'));
-  line(`  muted          ${isVoiceSessionMuted() ? 'yes' : 'no'}`);
-  line(`  voice id       ${getSessionVoiceId()}`);
-  line(`  requests today ${u.requests}`);
-  line(`  characters     ${u.characterCost} / ${u.cap || 'unlimited'}`);
-  line(`  state          ${u.state}`);
-  line(color('Subcommands: /voice sample | mute | unmute | voice <id> | reset | usage | cues', 'gray'));
+  line(`  muted              ${isVoiceSessionMuted() ? 'yes' : 'no'}`);
+  line(`  per-prompt cues    ${isPerPromptVoiceEnabled() ? 'ON' : 'OFF (default)'}`);
+  line(`  voice id           ${getSessionVoiceId()}`);
+  line(`  requests today     ${u.requests}`);
+  line(`  characters         ${u.characterCost} / ${u.cap || 'unlimited'}`);
+  line(`  state              ${u.state}`);
+  line(color('Subcommands: /voice sample | mute | unmute | voice <id> | reset | prompts on|off | usage | cues', 'gray'));
+  line(color('By default Karen only speaks on startup, /login, /sorry, /profile, /feed, level-up, streak-break.', 'gray'));
+  line(color('Use `/voice prompts on` to also have her speak on every verdict.', 'gray'));
 };
 
 const handleCommand = async (raw, rl) => {
