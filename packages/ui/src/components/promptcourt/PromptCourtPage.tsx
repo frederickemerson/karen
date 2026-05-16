@@ -880,6 +880,7 @@ const PromptCourtLayout: React.FC<{
         <div className="flex flex-wrap items-center justify-between gap-3">
           <a href="/" className="typography-ui-label text-primary hover:underline">Back to workspace</a>
           <div className="flex flex-wrap items-center gap-3">
+            <a href="/karen/voice" className="typography-micro text-primary hover:underline">Voice settings</a>
             <a href="/karen/landing" className="typography-micro text-primary hover:underline">Landing page</a>
             <div className="typography-micro text-muted-foreground">
               {source === 'cloud' ? 'Live Convex profile' : 'Local profile'} · GUI runs and terminal `/tui` sessions share this record.

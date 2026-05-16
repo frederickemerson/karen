@@ -52,6 +52,7 @@ import { useAppFontEffects } from '@/apps/useAppFontEffects';
 import { BrowserRouter } from 'react-router-dom';
 import { PromptCourtPage } from '@/components/promptcourt/PromptCourtPage';
 import { KarenLandingPage } from '@/components/promptcourt/KarenLandingPage';
+import { KarenVoicePage } from '@/components/promptcourt/KarenVoicePage';
 
 // Lazy-loaded heavy views — loaded on demand to reduce initial bundle size.
 const OnboardingScreen = lazyWithChunkRecovery(() =>
@@ -152,6 +153,11 @@ const readPromptCourtRoute = (): { username?: string | null } | null => {
   return null;
 };
 
+const isKarenVoicePath = (): boolean => {
+  if (typeof window === 'undefined') return false;
+  return window.location.pathname === '/karen/voice' || window.location.pathname === '/voice';
+};
+
 const isKarenLandingPath = (): boolean => {
   if (typeof window === 'undefined') {
     return false;
@@ -233,6 +239,7 @@ function App({ apis }: AppProps) {
   const isMcpOAuthCallback = React.useMemo(() => isMcpOAuthCallbackPath(), []);
   const promptCourtRoute = React.useMemo(() => readPromptCourtRoute(), []);
   const isKarenLanding = React.useMemo(() => isKarenLandingPath(), []);
+  const isKarenVoice = React.useMemo(() => isKarenVoicePath(), []);
 
   React.useEffect(() => {
     setStreamPerfEnabled(showMemoryDebug);
@@ -839,6 +846,14 @@ function App({ apis }: AppProps) {
         <BrowserRouter>
           <KarenLandingPage />
         </BrowserRouter>
+      </ErrorBoundary>
+    );
+  }
+
+  if (isKarenVoice) {
+    return (
+      <ErrorBoundary>
+        <KarenVoicePage />
       </ErrorBoundary>
     );
   }
