@@ -11,6 +11,35 @@ import { useMutation } from 'convex/react';
 
 import { api } from '../../../../../../convex/_generated/api';
 import { KarenMascot } from '../KarenMascot';
+import { isKarenAuthConfigured } from '../../../lib/karenCloudConfig';
+
+// Rendered when VITE_CLERK_PUBLISHABLE_KEY is missing at build time. Without the
+// publishable key the bundle ships without <ClerkProvider>, and <SignedIn>/
+// <SignedOut> throw on first render. We surface a setup message instead of
+// crashing to a blank page.
+const ClerkNotConfiguredPanel: React.FC<{ code: string | null }> = ({ code }) => (
+  <div className="mx-auto grid max-w-3xl gap-6 px-4 py-12 sm:px-6 lg:px-8">
+    <div className="font-mono text-xs font-semibold uppercase tracking-[0.18em] text-[#6f6f6f]">
+      setup required
+    </div>
+    <h1 className="text-4xl font-semibold leading-[1.05] tracking-normal">
+      Sign-up is not wired on this deployment yet.
+    </h1>
+    <p className="max-w-xl text-base leading-7 text-[#4d4d4d]">
+      The Karen landing site is missing <code className="rounded-sm bg-[#111] px-1 py-0.5 font-mono text-sm text-[#7bd88f]">VITE_CLERK_PUBLISHABLE_KEY</code>{' '}
+      (and likely <code className="rounded-sm bg-[#111] px-1 py-0.5 font-mono text-sm text-[#7bd88f]">VITE_CONVEX_URL</code>) at build time. The operator needs to set them in the host&apos;s environment variables and redeploy.
+    </p>
+    {code ? (
+      <div className="rounded-sm border border-[#111] bg-white p-3 font-mono text-sm">
+        <span className="text-[#6f6f6f]">code in URL: </span>
+        <span className="font-semibold text-[#111]">{code}</span>
+      </div>
+    ) : null}
+    <p className="text-sm text-[#6f6f6f]">
+      Until that&apos;s fixed, run <code className="rounded-sm bg-[#111] px-1 py-0.5 font-mono text-sm text-[#7bd88f]">karen login</code> in your terminal and follow the printed instructions.
+    </p>
+  </div>
+);
 
 type ApproveState =
   | { kind: 'idle' }
@@ -236,6 +265,10 @@ export const Link: React.FC = () => {
   const [params] = useSearchParams();
   const codeParam = params.get('code');
   const code = codeParam && codeParam.length > 0 ? codeParam : null;
+
+  if (!isKarenAuthConfigured) {
+    return <ClerkNotConfiguredPanel code={code} />;
+  }
 
   return (
     <div className="mx-auto grid max-w-7xl gap-10 px-4 py-12 sm:px-6 lg:px-8">

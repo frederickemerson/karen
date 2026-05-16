@@ -6,6 +6,7 @@ import { RiArrowRightLine, RiLogoutBoxRLine } from '@remixicon/react';
 import { toast } from 'sonner';
 
 import { api } from '../../../../../../convex/_generated/api';
+import { isKarenAuthConfigured } from '../../../lib/karenCloudConfig';
 
 const BIO_MAX = 200;
 
@@ -206,15 +207,34 @@ const SignedInForm: React.FC = () => {
   );
 };
 
-export const MyProfile: React.FC = () => (
-  <>
-    <SignedOut>
-      <SignedOutPanel />
-    </SignedOut>
-    <SignedIn>
-      <SignedInForm />
-    </SignedIn>
-  </>
+const ClerkNotConfigured: React.FC = () => (
+  <div className="mx-auto grid max-w-3xl gap-4 px-4 py-12 sm:px-6 lg:px-8">
+    <div className="font-mono text-xs font-semibold uppercase tracking-[0.18em] text-[#6f6f6f]">
+      setup required
+    </div>
+    <h1 className="text-4xl font-semibold leading-[1.05] tracking-normal">
+      Profile editing needs Clerk on this deployment.
+    </h1>
+    <p className="max-w-xl text-base leading-7 text-[#4d4d4d]">
+      Set <code className="rounded-sm bg-[#111] px-1 py-0.5 font-mono text-sm text-[#7bd88f]">VITE_CLERK_PUBLISHABLE_KEY</code> and{' '}
+      <code className="rounded-sm bg-[#111] px-1 py-0.5 font-mono text-sm text-[#7bd88f]">VITE_CONVEX_URL</code>{' '}
+      in the host&apos;s environment variables and redeploy.
+    </p>
+  </div>
 );
+
+export const MyProfile: React.FC = () => {
+  if (!isKarenAuthConfigured) return <ClerkNotConfigured />;
+  return (
+    <>
+      <SignedOut>
+        <SignedOutPanel />
+      </SignedOut>
+      <SignedIn>
+        <SignedInForm />
+      </SignedIn>
+    </>
+  );
+};
 
 export default MyProfile;
