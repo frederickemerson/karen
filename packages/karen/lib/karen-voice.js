@@ -31,10 +31,13 @@ const DEFAULT_VOICE_ID = 'z9fAnlkpzviPz146aGWa'; // Glinda — older, warm-ironi
 const DEFAULT_MODEL_ID = 'eleven_flash_v2_5';
 
 // Voice settings tuned by Karen's mood at the user, derived from score band.
+// v2 (2026-05): dropped stability (more inflection, less monotone) and raised
+// style (more emotion / character per line). Trade-off: more variance shot to
+// shot, but Karen sounds less like a TTS engine and more like a person.
 const VOICE_SETTINGS = {
-  angry:    { stability: 0.42, similarity_boost: 0.78, style: 0.65, use_speaker_boost: true, speed: 1.00 },
-  standard: { stability: 0.55, similarity_boost: 0.78, style: 0.55, use_speaker_boost: true, speed: 0.88 },
-  deadpan:  { stability: 0.82, similarity_boost: 0.78, style: 0.22, use_speaker_boost: true, speed: 0.85 },
+  angry:    { stability: 0.30, similarity_boost: 0.78, style: 0.80, use_speaker_boost: true, speed: 1.02 },
+  standard: { stability: 0.40, similarity_boost: 0.78, style: 0.70, use_speaker_boost: true, speed: 0.90 },
+  deadpan:  { stability: 0.70, similarity_boost: 0.78, style: 0.35, use_speaker_boost: true, speed: 0.85 },
 };
 
 const pickVoiceMood = (ctx = {}) => {

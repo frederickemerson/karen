@@ -477,13 +477,17 @@ http.route({
       ? body.mood
       : 'standard';
     const voiceSettings = {
-      angry:    { stability: 0.42, similarity_boost: 0.78, style: 0.65, use_speaker_boost: true, speed: 1.00 },
-      standard: { stability: 0.55, similarity_boost: 0.78, style: 0.55, use_speaker_boost: true, speed: 0.88 },
-      deadpan:  { stability: 0.82, similarity_boost: 0.78, style: 0.22, use_speaker_boost: true, speed: 0.85 },
+      // v2 (2026-05): less monotone, more expressive. See karen-voice.js for the
+      // same tuning on the TUI side.
+      angry:    { stability: 0.30, similarity_boost: 0.78, style: 0.80, use_speaker_boost: true, speed: 1.02 },
+      standard: { stability: 0.40, similarity_boost: 0.78, style: 0.70, use_speaker_boost: true, speed: 0.90 },
+      deadpan:  { stability: 0.70, similarity_boost: 0.78, style: 0.35, use_speaker_boost: true, speed: 0.85 },
     }[mood as 'angry' | 'standard' | 'deadpan'];
 
     const modelId = process.env.ELEVENLABS_MODEL_ID || 'eleven_flash_v2_5';
-    const contentHash = await sha256Hex(JSON.stringify({ rawText, voiceId, mood, modelId }));
+    // Cache hash includes the full voice_settings so any future tuning auto-busts
+    // the cache. Old MP3s linger in Convex file storage but stop being served.
+    const contentHash = await sha256Hex(JSON.stringify({ rawText, voiceId, mood, modelId, voiceSettings }));
 
     // Cache hit?
     const cached = await ctx.runQuery(internal.karen.findCachedVoice, { contentHash });
