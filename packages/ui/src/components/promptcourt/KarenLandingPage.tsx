@@ -1,10 +1,11 @@
 import React from 'react';
 import { useQuery } from 'convex/react';
-import { Link, Route, Routes, useLocation } from 'react-router-dom';
+import { Link, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
+import { useUser } from '@clerk/clerk-react';
 
 import { api } from '../../../../../convex/_generated/api';
 import type { PromptCourtOverview } from '@/lib/promptcourt';
-import { isKarenCloudConfigured } from '@/lib/karenCloudConfig';
+import { isKarenAuthConfigured, isKarenCloudConfigured } from '@/lib/karenCloudConfig';
 import { KarenLogo } from './KarenLogo';
 import { LandingAuthCta } from './landing/LandingAuthCta';
 import { Home } from './landing/Home';
@@ -16,6 +17,34 @@ import { SignUp } from './landing/SignUp';
 import { SignIn } from './landing/SignIn';
 import { UserProfile } from './landing/UserProfile';
 import { MyProfile } from './landing/MyProfile';
+
+const PENDING_CODE_KEY = 'karen.pendingDeviceCode';
+
+// Safety net for the `karen login` flow. If the user arrived at /link?code=XXX
+// (anonymous), SignedOutPanel in Link.tsx writes the code to sessionStorage.
+// When Clerk completes sign-up it should redirect back to /link?code=XXX via
+// forceRedirectUrl, but a Clerk fallback URL or an email-verification round
+// trip can sometimes land the user on a different page. This snap-back catches
+// that: once Clerk reports signed in, if there's a pending code in storage
+// and we're not on /link, push to /link?code=XXX so the SignedInPanel can run
+// approveDeviceLink and show "Linked. Return to your terminal."
+const PendingDeviceLinkSnapBack: React.FC = () => {
+  const { isSignedIn } = useUser();
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  React.useEffect(() => {
+    if (!isSignedIn) return;
+    if (location.pathname === '/link') return;
+    if (typeof window === 'undefined') return;
+    let pending: string | null = null;
+    try { pending = window.sessionStorage.getItem(PENDING_CODE_KEY); } catch {}
+    if (!pending) return;
+    navigate(`/link?code=${encodeURIComponent(pending)}`, { replace: true });
+  }, [isSignedIn, location.pathname, navigate]);
+
+  return null;
+};
 
 const navItems = [
   ['Home', '/'],
@@ -56,6 +85,8 @@ const LandingShell: React.FC<{ overview?: PromptCourtOverview | null }> = ({ ove
           <LandingAuthCta />
         </nav>
       </header>
+
+      {isKarenAuthConfigured ? <PendingDeviceLinkSnapBack /> : null}
 
       <main>
         <Routes>

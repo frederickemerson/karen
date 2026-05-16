@@ -1620,6 +1620,7 @@ export const exchangeDeviceCode = internalMutation({
       token: opaqueToken,
       user: {
         id: user._id,
+        clerkUserId: user.clerkUserId,
         username: user.username,
         displayName: user.displayName ?? user.username,
         imageUrl: user.imageUrl,

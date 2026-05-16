@@ -49,8 +49,20 @@ type ApproveState =
 
 const normalizeCode = (input: string) => input.trim().toUpperCase();
 
+const PENDING_CODE_KEY = 'karen.pendingDeviceCode';
+
 const SignedOutPanel: React.FC<{ code: string | null }> = ({ code }) => {
   const redirectUrl = code ? `/link?code=${encodeURIComponent(code)}` : '/link';
+
+  // Save the code into sessionStorage so we can snap the user back to /link?code=...
+  // if Clerk redirects them somewhere else after sign-up (e.g. via a fallback URL or
+  // an email-verification round-trip that loses our query string).
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (code) {
+      try { window.sessionStorage.setItem(PENDING_CODE_KEY, code); } catch {}
+    }
+  }, [code]);
 
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_440px] lg:items-start">
@@ -116,6 +128,10 @@ const SignedInPanel: React.FC<{ code: string | null }> = ({ code }) => {
       try {
         const result = (await approveDeviceLink({ userCode })) as { ok: boolean; username?: string } | undefined;
         if (result?.ok) {
+          // Clear the pending-code marker so the post-signup snap-back stops firing.
+          if (typeof window !== 'undefined') {
+            try { window.sessionStorage.removeItem(PENDING_CODE_KEY); } catch {}
+          }
           setState({ kind: 'success', username: result.username });
         } else {
           setState({ kind: 'error', message: 'Karen could not match that code.' });
