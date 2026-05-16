@@ -1,4 +1,5 @@
 import React from 'react';
+import { Link } from 'react-router-dom';
 import {
   RiArrowDownLine,
   RiArrowUpLine,
@@ -38,7 +39,6 @@ type LiveLeaderboardShowcaseProps = {
   events?: LiveLeaderboardEvent[];
   className?: string;
   live?: boolean;
-  allowPreviewData?: boolean;
   title?: string;
   subtitle?: string;
   updatedLabel?: string;
@@ -46,132 +46,11 @@ type LiveLeaderboardShowcaseProps = {
   emptySubtitle?: string;
 };
 
-const demoDevelopers: LiveLeaderboardDeveloper[] = [
-  {
-    id: 'maya',
-    name: 'Maya Chen',
-    handle: 'maya.c',
-    promptScore: 98,
-    quizPassRate: 96,
-    streak: 18,
-    rollbacksAvoided: 42,
-    rankDelta: 2,
-    status: 'live',
-  },
-  {
-    id: 'eli',
-    name: 'Eli Brooks',
-    handle: 'eli.builds',
-    promptScore: 94,
-    quizPassRate: 91,
-    streak: 12,
-    rollbacksAvoided: 37,
-    rankDelta: 1,
-    status: 'reviewing',
-  },
-  {
-    id: 'nora',
-    name: 'Nora Singh',
-    handle: 'nora.diff',
-    promptScore: 91,
-    quizPassRate: 89,
-    streak: 9,
-    rollbacksAvoided: 31,
-    rankDelta: -1,
-    status: 'live',
-  },
-  {
-    id: 'jo',
-    name: 'Jo Alvarez',
-    handle: 'jo.tests',
-    promptScore: 88,
-    quizPassRate: 87,
-    streak: 7,
-    rollbacksAvoided: 26,
-    rankDelta: 0,
-    status: 'idle',
-  },
-];
-
-const demoEvents: LiveLeaderboardEvent[] = [
-  {
-    id: 'evt-quiz-pass',
-    actor: '@maya.c',
-    label: 'diff quiz passed',
-    detail: 'auth/session.ts behavior explained in 42s',
-    timestamp: 'now',
-    scoreDelta: 14,
-    tone: 'pass',
-  },
-  {
-    id: 'evt-rollback',
-    actor: '@nora.diff',
-    label: 'rollback avoided',
-    detail: 'spotted a silent config drift before merge',
-    timestamp: '18s',
-    scoreDelta: 9,
-    tone: 'ship',
-  },
-  {
-    id: 'evt-streak',
-    actor: '@eli.builds',
-    label: 'streak extended',
-    detail: '12 clean reads without a panic revert',
-    timestamp: '31s',
-    scoreDelta: 7,
-    tone: 'pass',
-  },
-  {
-    id: 'evt-warning',
-    actor: '@jo.tests',
-    label: 'prompt tightened',
-    detail: 'Karen requested acceptance criteria',
-    timestamp: '46s',
-    scoreDelta: 3,
-    tone: 'warn',
-  },
-];
-
-const rankPlans = [
-  ['maya', 'eli', 'nora', 'jo'],
-  ['maya', 'nora', 'eli', 'jo'],
-  ['eli', 'maya', 'nora', 'jo'],
-  ['maya', 'eli', 'jo', 'nora'],
-];
-
-const deltaPlans: Record<string, number>[] = [
-  { maya: 2, eli: 1, nora: -1, jo: 0 },
-  { maya: 1, nora: 2, eli: -1, jo: 0 },
-  { eli: 2, maya: -1, nora: 1, jo: 0 },
-  { maya: 2, eli: 0, jo: 1, nora: -2 },
-];
-
 const cn = (...classes: Array<string | false | null | undefined>) => classes.filter(Boolean).join(' ');
 
 const clampPercent = (value: number) => Math.max(0, Math.min(100, Math.round(value)));
 
 const formatSigned = (value: number) => `${value > 0 ? '+' : ''}${value}`;
-
-const getDemoDevelopers = (tick: number) => {
-  const planIndex = tick % rankPlans.length;
-  const rankPlan = rankPlans[planIndex];
-  const deltas = deltaPlans[planIndex];
-  const byId = new Map(demoDevelopers.map((developer) => [developer.id, developer]));
-  const rankedDevelopers: LiveLeaderboardDeveloper[] = [];
-
-  rankPlan.forEach((id, index) => {
-    const developer = byId.get(id);
-    if (!developer) return;
-    const scoreLift = planIndex === 0 ? 0 : (rankPlan.length - index) * 2;
-    rankedDevelopers.push({
-      ...developer,
-      promptScore: Math.min(100, developer.promptScore + scoreLift),
-      rankDelta: deltas[id] ?? developer.rankDelta,
-    });
-  });
-
-  return rankedDevelopers;
-};
 
 const getToneClasses = (tone: LiveLeaderboardEvent['tone']) => {
   if (tone === 'warn') return 'border-[#ffcc66]/35 bg-[#ffcc66]/10 text-[#ffe1a3]';
@@ -261,56 +140,58 @@ const LeaderboardRow = ({
       transition={{ duration: 0.35, ease: 'easeOut' }}
       className="rounded-sm border border-[#f8f1e3]/14 bg-[#f8f1e3]/7 p-3 shadow-[4px_4px_0_rgba(248,241,227,0.06)]"
     >
-      <div className="grid gap-3 sm:grid-cols-[44px_1fr_auto] sm:items-center">
-        <div className="flex items-center gap-2 sm:block">
-          <motion.div
-            key={rank}
-            initial={{ rotateX: 72, opacity: 0 }}
-            animate={{ rotateX: 0, opacity: 1 }}
-            className={cn(
-              'grid size-11 place-items-center rounded-sm border font-mono text-lg font-semibold',
-              rank === 1
-                ? 'border-[#ffcc66] bg-[#ffcc66] text-[#17130f]'
-                : 'border-[#f8f1e3]/20 bg-black/25 text-[#f8f1e3]',
-            )}
-          >
-            {rank}
-          </motion.div>
-          <div className="sm:hidden">
-            <RankDelta value={developer.rankDelta} />
+      <Link to={`/u/${encodeURIComponent(developer.handle)}`} className="block">
+        <div className="grid gap-3 sm:grid-cols-[44px_1fr_auto] sm:items-center">
+          <div className="flex items-center gap-2 sm:block">
+            <motion.div
+              key={rank}
+              initial={{ rotateX: 72, opacity: 0 }}
+              animate={{ rotateX: 0, opacity: 1 }}
+              className={cn(
+                'grid size-11 place-items-center rounded-sm border font-mono text-lg font-semibold',
+                rank === 1
+                  ? 'border-[#ffcc66] bg-[#ffcc66] text-[#17130f]'
+                  : 'border-[#f8f1e3]/20 bg-black/25 text-[#f8f1e3]',
+              )}
+            >
+              {rank}
+            </motion.div>
+            <div className="sm:hidden">
+              <RankDelta value={developer.rankDelta} />
+            </div>
+          </div>
+
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="truncate text-base font-semibold tracking-normal text-[#f8f1e3]">{developer.name}</h3>
+              <span className="font-mono text-xs text-[#c9bca8]">@{developer.handle}</span>
+            </div>
+            <div className="mt-1 flex flex-wrap items-center gap-2 font-mono text-[11px] text-[#c9bca8]">
+              <span className="inline-flex items-center gap-1">
+                <RiPulseLine className="size-3.5" />
+                {statusLabel}
+              </span>
+              <span>{developer.streak}x streak</span>
+              <span>{developer.rollbacksAvoided} rollbacks avoided</span>
+            </div>
+          </div>
+
+          <div className="grid gap-2 sm:min-w-40">
+            <div className="hidden justify-end sm:flex">
+              <RankDelta value={developer.rankDelta} />
+            </div>
+            <div className="font-mono text-2xl font-semibold leading-none text-[#ffcc66]">
+              {clampPercent(developer.promptScore)}
+              <span className="ml-1 text-xs font-normal text-[#c9bca8]">pts</span>
+            </div>
           </div>
         </div>
 
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <h3 className="truncate text-base font-semibold tracking-normal text-[#f8f1e3]">{developer.name}</h3>
-            <span className="font-mono text-xs text-[#c9bca8]">@{developer.handle}</span>
-          </div>
-          <div className="mt-1 flex flex-wrap items-center gap-2 font-mono text-[11px] text-[#c9bca8]">
-            <span className="inline-flex items-center gap-1">
-              <RiPulseLine className="size-3.5" />
-              {statusLabel}
-            </span>
-            <span>{developer.streak}x streak</span>
-            <span>{developer.rollbacksAvoided} rollbacks avoided</span>
-          </div>
+        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+          <MetricBar label="prompt score" value={developer.promptScore} tone="bg-[#ffcc66]" />
+          <MetricBar label="quiz pass rate" value={developer.quizPassRate} tone="bg-[#7bd88f]" />
         </div>
-
-        <div className="grid gap-2 sm:min-w-40">
-          <div className="hidden justify-end sm:flex">
-            <RankDelta value={developer.rankDelta} />
-          </div>
-          <div className="font-mono text-2xl font-semibold leading-none text-[#ffcc66]">
-            {clampPercent(developer.promptScore)}
-            <span className="ml-1 text-xs font-normal text-[#c9bca8]">pts</span>
-          </div>
-        </div>
-      </div>
-
-      <div className="mt-3 grid gap-2 sm:grid-cols-2">
-        <MetricBar label="prompt score" value={developer.promptScore} tone="bg-[#ffcc66]" />
-        <MetricBar label="quiz pass rate" value={developer.quizPassRate} tone="bg-[#7bd88f]" />
-      </div>
+      </Link>
     </motion.li>
   );
 };
@@ -348,37 +229,23 @@ export const LiveLeaderboardShowcase: React.FC<LiveLeaderboardShowcaseProps> = (
   events,
   className = '',
   live = true,
-  allowPreviewData = false,
   title = 'Live leaderboard for people who read the diff.',
   subtitle = 'Convex-ready rankings surface prompt quality, quiz accuracy, streaks, and rollbacks avoided as the team ships.',
   updatedLabel = 'subscribed to promptcourt.leaderboard',
   emptyTitle = 'No public users yet.',
-  emptySubtitle = 'Create a profile or sync a Karen run and the first public standings will appear here.',
+  emptySubtitle = 'Karen has nothing to put on the wall. Run karen, ship a guarded patch, and a name shows up here.',
 }) => {
-  const hasDevelopers = Boolean(developers?.length);
-  const usingDemoData = allowPreviewData && !hasDevelopers;
-  const [tick, setTick] = React.useState(0);
-
-  React.useEffect(() => {
-    if (!live || (!usingDemoData && !events?.length)) return undefined;
-    const timer = window.setInterval(() => setTick((value) => value + 1), 3200);
-    return () => window.clearInterval(timer);
-  }, [events?.length, live, usingDemoData]);
-
   const visibleDevelopers = React.useMemo(() => {
     if (developers?.length) {
       return [...developers].sort((a, b) => b.promptScore - a.promptScore).slice(0, 5);
     }
-    return usingDemoData ? getDemoDevelopers(tick) : [];
-  }, [developers, tick, usingDemoData]);
+    return [];
+  }, [developers]);
 
   const visibleEvents = React.useMemo(() => {
-    const source = events?.length ? events : usingDemoData ? demoEvents : [];
-    if (events?.length) return source.slice(0, 5);
-    if (!source.length) return [];
-    const offset = tick % source.length;
-    return [...source.slice(offset), ...source.slice(0, offset)].slice(0, 4);
-  }, [events, tick, usingDemoData]);
+    if (events?.length) return events.slice(0, 5);
+    return [];
+  }, [events]);
 
   const aggregateStats = React.useMemo(() => {
     const totalRollbacksAvoided = visibleDevelopers.reduce((sum, developer) => sum + developer.rollbacksAvoided, 0);
@@ -393,7 +260,7 @@ export const LiveLeaderboardShowcase: React.FC<LiveLeaderboardShowcaseProps> = (
       ['rollbacks saved', String(totalRollbacksAvoided), RiGitBranchLine],
     ] as const;
   }, [visibleDevelopers]);
-  const statusLabel = live ? 'live convex feed' : usingDemoData ? 'preview data' : 'convex not configured';
+  const statusLabel = live ? 'live convex feed' : 'convex not configured';
 
   return (
     <section
@@ -428,7 +295,7 @@ export const LiveLeaderboardShowcase: React.FC<LiveLeaderboardShowcaseProps> = (
             </div>
 
             <div className="mt-6">
-              <div className="font-mono text-xs uppercase tracking-[0.18em] text-[#ffcc66]">Feature 8</div>
+              <div className="font-mono text-xs uppercase tracking-[0.18em] text-[#ffcc66]">scoreboard</div>
               <h2 className="mt-2 text-3xl font-semibold leading-tight tracking-normal text-[#f8f1e3] sm:text-4xl">
                 {title}
               </h2>
@@ -458,7 +325,7 @@ export const LiveLeaderboardShowcase: React.FC<LiveLeaderboardShowcaseProps> = (
                 <RiLiveLine className="size-4" />
                 recent court events
               </span>
-              <span>{usingDemoData ? 'preview stream' : 'convex data'}</span>
+              <span>convex data</span>
             </div>
             {visibleEvents.length > 0 ? (
               <ul className="grid gap-2">
@@ -470,7 +337,7 @@ export const LiveLeaderboardShowcase: React.FC<LiveLeaderboardShowcaseProps> = (
               </ul>
             ) : (
               <div className="rounded-sm border border-[#7bd88f]/20 bg-black/20 p-3 font-mono text-xs leading-5 text-[#c9bca8]">
-                No public court events yet. Blocked prompts, quiz failures, and promoted runs will stream here from Convex.
+                Karen has nothing public to roast yet. Blocked prompts, quiz failures, and promoted runs show up here once someone runs `karen`.
               </div>
             )}
           </div>

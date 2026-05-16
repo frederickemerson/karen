@@ -847,6 +847,7 @@ function App({ apis }: AppProps) {
     return (
       <ErrorBoundary>
         <PromptCourtPage username={promptCourtRoute.username} />
+        <Toaster richColors position="top-right" />
       </ErrorBoundary>
     );
   }

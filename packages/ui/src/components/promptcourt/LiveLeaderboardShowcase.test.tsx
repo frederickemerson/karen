@@ -11,7 +11,6 @@ describe('LiveLeaderboardShowcase', () => {
         developers={[]}
         events={[]}
         live
-        allowPreviewData={false}
         updatedLabel="karen.overview live"
       />,
     );
@@ -37,7 +36,6 @@ describe('LiveLeaderboardShowcase', () => {
           tone: 'warn',
         }]}
         live
-        allowPreviewData={false}
       />,
     );
 

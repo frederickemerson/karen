@@ -15,6 +15,30 @@ import { createPromptCourtStore } from '../../web/server/lib/promptcourt/storage
 import { analyzeDiffImpact, parseDiff } from '../../web/server/lib/promptcourt/quiz-analyzer.js';
 import { buildQuiz } from '../../web/server/lib/promptcourt/quiz.js';
 import { installWorktreeCommitHooks, createCommitTokenFile } from '../../web/server/lib/opencode/git-commit-guard.js';
+import {
+  loadAuth,
+  saveAuth,
+  clearAuth,
+  runLoginFlow,
+} from '../lib/karen-auth.js';
+// withFileLock exported from karen-auth.js for wrapping settings.json read-modify-write;
+// not yet wired around ensureGuiProjectDirectory / writeDefaultModel / addTerminalAudioUsage.
+import {
+  pickFace,
+  renderFace,
+  printVerdictStamp,
+  printStartupMood,
+  printStreakBar,
+  printShameStamp,
+  printProfileBarb,
+  printGoodbye,
+  pickGoodbye,
+  sorryReply,
+  pleaseReply,
+  karenHaiku,
+} from '../lib/karen-fx.js';
+// drumrollReveal, paintBigText, printIdleHeckle, printStreakTombstone live in karen-fx.js
+// but are not yet wired into the runQuiz / idle / streak-break code paths. Re-import when wiring.
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '../../..');
@@ -59,13 +83,7 @@ const envEnabled = (name, defaultValue = true) => {
 
 const verboseAllowed = () => envEnabled('KAREN_VERBOSE', false);
 
-const karenAvatar = [
-  '  ░░████░░ ',
-  '  ░█░░░░█░ ',
-  '  █░●░░●░█ ',
-  '  █░░▔▔░░█ ',
-  '  ░█▄▄▄▄█░ ',
-];
+// karenAvatar legacy constant removed — drawShell now renders mood-aware faces via pickFace/renderFace from karen-fx.js.
 
 const KAREN_LONG_PROMPT_THRESHOLD = 900;
 const KAREN_SCREAMS = [
@@ -196,7 +214,7 @@ const playTerminalAudioFile = (filePath) => {
     return spawnSilent('powershell.exe', [
       '-NoProfile',
       '-Command',
-      `(New-Object Media.SoundPlayer ${JSON.stringify(filePath)}).PlaySync()`,
+      `Add-Type -AssemblyName PresentationCore; $p = New-Object System.Windows.Media.MediaPlayer; $p.Open([Uri]::new(${JSON.stringify(filePath)})); $p.Play(); Start-Sleep -Milliseconds 3500`,
     ]);
   }
   return false;
@@ -495,9 +513,15 @@ const getRepo = () => {
   const rootResult = run('git', ['rev-parse', '--show-toplevel']);
   const branchResult = run('git', ['branch', '--show-current']);
   const prefixResult = run('git', ['rev-parse', '--show-prefix']);
+  let branch = branchResult.status === 0 && branchResult.stdout.trim() ? branchResult.stdout.trim() : '';
+  if (!branch && rootResult.status === 0) {
+    // Detached HEAD — show the short SHA instead of the misleading 'no-branch'.
+    const sha = run('git', ['rev-parse', '--short', 'HEAD']);
+    if (sha.status === 0 && sha.stdout.trim()) branch = `(${sha.stdout.trim()})`;
+  }
   return {
     root: rootResult.status === 0 ? rootResult.stdout.trim() : process.cwd(),
-    branch: branchResult.status === 0 && branchResult.stdout.trim() ? branchResult.stdout.trim() : 'no-branch',
+    branch: branch || 'no-branch',
     prefix: prefixResult.status === 0 ? prefixResult.stdout.trim().replace(/\/$/, '') : '',
     isGit: rootResult.status === 0,
   };
@@ -602,22 +626,56 @@ const needsSetup = () => {
   return !binary || oc.provider.startsWith('use /') || oc.model.startsWith('use /');
 };
 
-const username = () => store.normalizeUsername(process.env.KAREN_USER || os.userInfo().username || 'local-user');
+const username = () => {
+  // Prefer the Clerk-bound identity from `karen login` when present; fall back to KAREN_USER
+  // (used during pre-login bootstrap and self-checks) and finally the OS username.
+  const auth = loadAuth();
+  if (auth?.username) return store.normalizeUsername(auth.username);
+  return store.normalizeUsername(process.env.KAREN_USER || os.userInfo().username || 'local-user');
+};
+
+// Valid OpenCode passthrough verbs. Unknown /commands print a Karen-voice nudge instead of
+// silently forwarding to opencode (which often returns an opaque CLI parse error).
+const VALID_OPENCODE_VERBS = new Set([
+  'tui', 'tui-raw', 'run', 'providers', 'auth', 'models', 'mcp', 'agent',
+  'attach', 'serve', 'web', 'session', 'stats', 'export', 'import',
+  'plugin', 'plug', 'github', 'pr', 'debug', 'upgrade', 'completion',
+  'db', 'acp', 'opencode', 'oc',
+]);
+const KAREN_BUILTIN_COMMANDS = new Set([
+  'help', 'commands', 'gui', 'setup', 'audio', 'feed', 'profile', 'diff',
+  'quit', 'exit', 'q', 'bye', 'login', 'logout', 'sorry', 'please',
+  'karen', 'git-gud',
+]);
 
 const drawShell = () => {
   const repo = getRepo();
   const oc = readOpenCodeState();
   const profile = store.getProfile(username());
+  const stats = profile.stats || {};
   if (process.stdout.isTTY) process.stdout.write('\x1b[2J\x1b[H');
   line(color('KAREN', 'pink') + color('  terminal judgment layer for OpenCode', 'gray'));
   line(color('═'.repeat(72), 'gray'));
-  for (const avatarLine of karenAvatar) {
+  const faceName = pickFace({ score: stats.disciplineScore, idle: false, verdict: null });
+  const face = renderFace(faceName);
+  for (const avatarLine of face) {
     line(`${color(avatarLine, 'pink')}  ${color('repo', 'cyan')} ${repo.root}  ${color('branch', 'cyan')} ${repo.branch}`);
   }
-  line(`${color('user', 'cyan')} @${username()}  ${color('discipline', 'cyan')} ${profile.stats.disciplineScore}/100 ${profile.stats.level}`);
+  line(`${color('user', 'cyan')} @${username()}  ${color('discipline', 'cyan')} ${stats.disciplineScore}/100 ${stats.level || ''}`);
   line(`${color('provider', 'cyan')} ${oc.provider}  ${color('model', 'cyan')} ${oc.model}  ${color('plugins', 'cyan')} ${oc.pluginCount}`);
   line(color('─'.repeat(72), 'gray'));
-  line(`${color('/help', 'green')} commands  ${color('/gui', 'green')} web GUI  ${color('/providers', 'green')} auth  ${color('/models', 'green')} models  ${color('/feed', 'green')} shame`);
+  line(`${color('/help', 'green')} commands  ${color('/gui', 'green')} web GUI  ${color('/login', 'green')} link  ${color('/providers', 'green')} auth  ${color('/models', 'green')} models  ${color('/feed', 'green')} shame`);
+  // Personality: startup mood + streak bar + profile barb (all gated by KAREN_FX + isTTY).
+  printStartupMood({ postLossStreak: (stats.currentStreak || 0) === 0 && (stats.longestStreak || 0) >= 3 });
+  printStreakBar(stats.currentStreak || 0);
+  printProfileBarb({
+    disciplineScore: stats.disciplineScore || 50,
+    publicFailureCount: stats.publicFailureCount || 0,
+    currentStreak: stats.currentStreak || 0,
+  });
+  if (!loadAuth()) {
+    line(color('Not linked. Run /login to attach this device to your account.', 'amber'));
+  }
   if (needsSetup()) {
     line(color('Setup needed: run /setup to connect providers and choose a default model.', 'amber'));
   }
@@ -657,12 +715,15 @@ const printVerdict = (prompt, evaluation) => {
   }
   if (!evaluation.allowed) {
     playAudioCue('prompt-blocked', 'Prompt blocked. Rewrite it with files, constraints, tests, and done criteria.');
+    // Personality: animated BLOCKED stamp before details (gated by KAREN_FX).
+    void printVerdictStamp('blocked');
     line('');
     line(color('Suggested appeal:', 'green'));
     line(evaluation.suggestedRewrite);
     const { post } = recordBlocked(prompt, evaluation);
     line('');
     line(post ? color(`Public record: ${post.id}`, 'red') : color('Public posting disabled by Karen privacy policy.', 'amber'));
+    if (post?.id) printShameStamp({ username: username(), postId: post.id });
   }
 };
 
@@ -728,26 +789,24 @@ const classifyTuiContext = (screenTail) => {
     .filter(Boolean)
     .slice(-8)
     .join('\n');
+  // Match picker headers (select/choose/search/pick) only when followed by an option line
+  // below; this avoids false positives on real prompts like "rewrite the select query".
+  // Standalone confirmation/key prompts and `[y/n]` are kept as broad matches because their
+  // shape is unique.
   const controlPattern = [
-    'select',
-    'choose',
-    'picker',
-    'providers?',
-    'models?',
-    'confirm',
-    'continue\\?',
-    'are you sure',
-    'press enter',
+    '\\b(?:select|choose|search|pick(?:er)?)\\b.{0,40}\\n\\S',
+    'pick a ',
+    'press enter to ',
     'press any key',
-    'search',
-    'filter',
-    'command palette',
-    'esc',
-    'arrow',
-    'tab',
-    'ctrl\\+',
-    'yes/no',
+    'are you sure',
+    '\\bcontinue\\?',
+    '\\byes/no\\b',
+    '\\bconfirm\\?',
     '\\[y/n\\]',
+    '\\[y/n/q\\]',
+    'command palette',
+    '(^|\\n)\\s*[▶➜→●○]',
+    '\\bcommit message\\b',
   ].join('|');
   if (new RegExp(controlPattern, 'i').test(recentLines)) {
     return 'control';
@@ -792,6 +851,7 @@ const printTuiBlock = (prompt, evaluation) => {
   const { post } = recordBlocked(prompt, evaluation);
   playAudioCue('prompt-blocked', 'OpenCode did not receive that prompt. Rewrite it with receipts.');
   process.stdout.write('\r\n');
+  void printVerdictStamp('blocked');
   line(color('KAREN INTERCEPTED THAT TUI PROMPT', 'red'));
   line(color(`Verdict: BLOCKED ${evaluation.score}/100`, 'red'));
   for (const reason of evaluation.reasons.slice(0, 4)) {
@@ -800,6 +860,7 @@ const printTuiBlock = (prompt, evaluation) => {
   line(color('Suggested appeal:', 'green'));
   line(evaluation.suggestedRewrite);
   line(post ? color(`Public record: ${post.id}`, 'red') : color('Public posting disabled by Karen privacy policy.', 'amber'));
+  if (post?.id) printShameStamp({ username: username(), postId: post.id });
   line(color('OpenCode did not receive Enter. Rewrite the prompt in the TUI input.', 'amber'));
   process.stdout.write('\r\n');
 };
@@ -896,6 +957,16 @@ const cleanupWorktree = (repoRoot, worktreePath, runtimeDir) => {
   }
 };
 
+const activeWorktrees = new Set();
+const registerActiveWorktree = (ref) => { if (ref) activeWorktrees.add(ref); };
+const unregisterActiveWorktree = (ref) => { if (ref) activeWorktrees.delete(ref); };
+const cleanupAllWorktreesNow = () => {
+  for (const ref of activeWorktrees) {
+    try { cleanupWorktree(ref.repoRoot, ref.worktreePath, ref.runtimeDir); } catch {}
+  }
+  activeWorktrees.clear();
+};
+
 const createIsolatedWorktree = () => {
   const repo = getRepo();
   if (!repo.isGit) {
@@ -988,12 +1059,19 @@ const promoteGeneratedDiff = (repoRoot, generatedDiff) => {
   return false;
 };
 
-const runAgent = async (prompt, session) => {
+const runAgent = async (prompt, session, outerRl = null) => {
   const isolated = createIsolatedWorktree();
   if (!isolated.ok) {
     line(color(isolated.error, 'red'));
     return;
   }
+
+  const worktreeRef = {
+    repoRoot: isolated.repoRoot,
+    worktreePath: isolated.worktreePath,
+    runtimeDir: isolated.runtimeDir,
+  };
+  registerActiveWorktree(worktreeRef);
 
   if (verboseAllowed()) {
     line(color(`Running OpenCode in isolated worktree: ${isolated.worktreePath}`, 'cyan'));
@@ -1005,7 +1083,7 @@ const runAgent = async (prompt, session) => {
       if (generatedDiff.trim()) {
         const summary = parseDiff(generatedDiff);
         const changedFiles = summary.files.map((file) => file.path);
-        const quizPassed = await runQuiz({ prompt, generatedDiff, cwd: isolated.worktreePath });
+        const quizPassed = await runQuiz({ prompt, generatedDiff, cwd: isolated.worktreePath, outerRl });
         if (quizPassed) {
           const promoted = promoteGeneratedDiff(isolated.repoRoot, generatedDiff);
           store.recordQuizResult({
@@ -1060,6 +1138,7 @@ const runAgent = async (prompt, session) => {
     }
   } finally {
     cleanupWorktree(isolated.repoRoot, isolated.worktreePath, isolated.runtimeDir);
+    unregisterActiveWorktree(worktreeRef);
   }
 };
 
@@ -1106,7 +1185,9 @@ const teachAfterDiscard = ({ prompt, generatedDiff, reason }) => {
   line('');
 };
 
-const runQuiz = async ({ prompt, generatedDiff, cwd = null }) => {
+const runQuiz = async ({ prompt, generatedDiff, cwd = null, outerRl = null }) => {
+  // Pause any outer readline so we don't double-bind stdin; a single rl owns the TTY during quiz.
+  if (outerRl && typeof outerRl.pause === 'function') outerRl.pause();
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   const quiz = await buildQuiz({
     prompt,
@@ -1158,6 +1239,7 @@ const runQuiz = async ({ prompt, generatedDiff, cwd = null }) => {
   } finally {
     stopMusic();
     rl.close();
+    if (outerRl && typeof outerRl.resume === 'function') outerRl.resume();
   }
 };
 
@@ -1245,6 +1327,38 @@ const runSetupWizard = async (rl, { force = false } = {}) => {
   } else if (modelAnswer.trim()) {
     line(color('Default model not saved. Use provider/model, for example opencode/minimax-m2.5-free.', 'amber'));
   }
+
+  // Cloud login step: required when KAREN_REQUIRE_CLOUD=1, optional otherwise.
+  // First-run wizard now drives device-link flow; user can still skip and run /login later if not required.
+  const auth = loadAuth();
+  if (!auth) {
+    const requireCloud = envEnabled('KAREN_REQUIRE_CLOUD', false);
+    line('');
+    line(color('Cloud profile', 'pink'));
+    if (requireCloud) {
+      line(color('Karen requires a cloud profile. Opening the link flow.', 'gray'));
+      const result = await runLoginFlow({ verbose: verboseAllowed() });
+      if (result?.token) {
+        saveAuth(result);
+        line(color(`Linked. Karen knows you as @${result.username}.`, 'green'));
+      } else {
+        line(color('Login did not complete. Run /login when you are ready.', 'red'));
+      }
+    } else {
+      const answer = await rl.question(color('Link this device to a cloud profile now? [y/N] ', 'green'));
+      if (answer.trim().toLowerCase().startsWith('y')) {
+        const result = await runLoginFlow({ verbose: verboseAllowed() });
+        if (result?.token) {
+          saveAuth(result);
+          line(color(`Linked. Karen knows you as @${result.username}.`, 'green'));
+        } else {
+          line(color('Login did not complete. Run /login when you are ready.', 'amber'));
+        }
+      } else {
+        line(color('Skipping cloud link. Karen will judge locally. Run /login any time.', 'gray'));
+      }
+    }
+  }
 };
 
 const printFeed = () => {
@@ -1304,10 +1418,32 @@ const handleCommand = async (raw, rl) => {
     line(stat.stdout || color('No diff.', 'green'));
   } else if (command === 'opencode' || command === 'oc') {
     await proxyOpencode(rest);
+  } else if (command === 'login') {
+    const result = await runLoginFlow({ verbose: verboseAllowed() });
+    if (result?.token) {
+      saveAuth(result);
+      line(color(`Linked. Karen knows you as @${result.username}.`, 'green'));
+    } else {
+      line(color('Login did not complete. Run /login again when you are ready.', 'amber'));
+    }
+  } else if (command === 'logout') {
+    clearAuth();
+    line(color('Karen forgets you. For now.', 'gray'));
+  } else if (command === 'sorry') {
+    line(color(sorryReply(), 'amber'));
+  } else if (command === 'please') {
+    line(color(pleaseReply(), 'amber'));
+  } else if (command === 'karen') {
+    line(color(karenHaiku(), 'pink'));
   } else if (command === 'quit' || command === 'exit' || command === 'q' || command === 'bye') {
     return false;
-  } else {
+  } else if (VALID_OPENCODE_VERBS.has(command)) {
     await proxyOpencode([command, ...rest]);
+  } else if (KAREN_BUILTIN_COMMANDS.has(command)) {
+    // Defensive: a builtin slipped past the explicit branches above.
+    line(color(`Karen: /${command} is not wired yet. Try /help.`, 'amber'));
+  } else {
+    line(color(`Karen: I do not know /${command}. Try /help.`, 'amber'));
   }
   return true;
 };
@@ -1325,10 +1461,17 @@ const main = async () => {
 
   const initialPrompt = args.join(' ').trim();
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  rl.on('SIGINT', () => {
+  const handleInterrupt = () => {
     line('');
-    line(color('Karen dismissed.', 'gray'));
+    cleanupAllWorktreesNow();
+    line(color(printGoodbye(pickGoodbye({})), 'gray'));
     process.exit(0);
+  };
+  rl.on('SIGINT', handleInterrupt);
+  process.on('SIGTERM', handleInterrupt);
+  process.on('exit', () => {
+    // Best-effort sync cleanup on any other exit path.
+    if (activeWorktrees.size > 0) cleanupAllWorktreesNow();
   });
 
   if (process.env.KAREN_SKIP_SETUP !== '1') {
@@ -1336,17 +1479,27 @@ const main = async () => {
   }
 
   const handlePrompt = async (prompt) => {
-    maybeScreamAtLongPrompt(prompt);
-    const evaluation = evaluatePrompt(prompt);
-    printVerdict(prompt, evaluation);
-    if (shouldRunAgentForEvaluation(evaluation)) {
-      const session = store.recordApprovedPrompt({
-        username: username(),
-        prompt: redactPublicText(prompt, 1200),
-        evaluation,
-        sessionId: `karen_${Date.now()}`,
-      });
-      await runAgent(prompt, session);
+    try {
+      maybeScreamAtLongPrompt(prompt);
+      const evaluation = evaluatePrompt(prompt);
+      printVerdict(prompt, evaluation);
+      if (shouldRunAgentForEvaluation(evaluation)) {
+        const session = store.recordApprovedPrompt({
+          username: username(),
+          prompt: redactPublicText(prompt, 1200),
+          evaluation,
+          sessionId: `karen_${Date.now()}`,
+        });
+        await runAgent(prompt, session, rl);
+      }
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      line('');
+      line(color(`Karen tripped over something: ${reason}`, 'red'));
+      if (verboseAllowed() && error instanceof Error && error.stack) {
+        line(color(error.stack, 'gray'));
+      }
+      line(color('Karen will keep judging. Try again.', 'gray'));
     }
   };
 

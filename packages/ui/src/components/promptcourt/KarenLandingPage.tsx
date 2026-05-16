@@ -10,10 +10,17 @@ import { LandingAuthCta } from './landing/LandingAuthCta';
 import { Home } from './landing/Home';
 import { Scoreboard } from './landing/Scoreboard';
 import { Install } from './landing/Install';
+import { HowItWorks } from './landing/HowItWorks';
+import { Link as LinkRoute } from './landing/Link';
+import { SignUp } from './landing/SignUp';
+import { SignIn } from './landing/SignIn';
+import { UserProfile } from './landing/UserProfile';
+import { MyProfile } from './landing/MyProfile';
 
 const navItems = [
   ['Home', '/'],
   ['Scoreboard', '/scoreboard'],
+  ['How it works', '/how-it-works'],
   ['Install', '/install'],
 ] as const;
 
@@ -55,6 +62,12 @@ const LandingShell: React.FC<{ overview?: PromptCourtOverview | null }> = ({ ove
           <Route path="/" element={<Home />} />
           <Route path="/scoreboard" element={<Scoreboard overview={overview} />} />
           <Route path="/install" element={<Install />} />
+          <Route path="/how-it-works" element={<HowItWorks />} />
+          <Route path="/link" element={<LinkRoute />} />
+          <Route path="/signup/*" element={<SignUp />} />
+          <Route path="/signin/*" element={<SignIn />} />
+          <Route path="/u/:username" element={<UserProfile />} />
+          <Route path="/profile" element={<MyProfile />} />
         </Routes>
       </main>
     </div>

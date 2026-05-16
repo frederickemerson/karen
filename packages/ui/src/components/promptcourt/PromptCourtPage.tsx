@@ -1,5 +1,5 @@
 import React from 'react';
-import { SignInButton, SignedIn, SignedOut, UserButton, useUser } from '@clerk/clerk-react';
+import { SignInButton, SignUpButton, SignedIn, SignedOut, UserButton, useUser } from '@clerk/clerk-react';
 import { useMutation, useQuery } from 'convex/react';
 import {
   fetchPromptCourtOverview,
@@ -17,8 +17,126 @@ import { playKarenEventAudio, type KarenAudioEvent } from '@/lib/karenVoice';
 import { KarenLogo } from './KarenLogo';
 import { KarenMascot } from './KarenMascot';
 import { KarenQuizGameModal, type KarenQuizRun } from './KarenQuizGameModal';
+import { PublicProfileView, PublicProfileNotFound, PublicProfileLoading } from './PublicProfileView';
 import { isKarenAuthConfigured, isKarenCloudConfigured } from '@/lib/karenCloudConfig';
 import { api } from '../../../../../convex/_generated/api';
+
+// Module-scoped counter for the `karen-document-scroll` class. Multiple Karen
+// components can mount/unmount in quick succession during route swaps; without
+// a counter the last unmount can strip the class while another consumer is
+// still on screen. Increment on mount, decrement on unmount; only remove when
+// the count is zero.
+let karenScrollClassCount = 0;
+const acquireKarenScrollClass = () => {
+  karenScrollClassCount += 1;
+  if (karenScrollClassCount === 1) {
+    document.documentElement.classList.add('karen-document-scroll');
+  }
+};
+const releaseKarenScrollClass = () => {
+  karenScrollClassCount = Math.max(0, karenScrollClassCount - 1);
+  if (karenScrollClassCount === 0) {
+    document.documentElement.classList.remove('karen-document-scroll');
+  }
+};
+
+// EventSource with exponential-backoff reconnect. Returns a cleanup function
+// and exposes a status callback so the UI can render a "reconnecting" pill.
+const RECONNECT_BASE_MS = 1000;
+const RECONNECT_CAP_MS = 30000;
+
+type ConnectionStatus = 'connecting' | 'open' | 'reconnecting' | 'closed';
+
+const createReconnectingEventSource = (
+  url: string,
+  options: {
+    onMessage: (event: MessageEvent) => void;
+    eventName: string;
+    onStatus?: (status: ConnectionStatus) => void;
+  },
+): (() => void) => {
+  let attempt = 0;
+  let cancelled = false;
+  let source: EventSource | null = null;
+  let retryTimer: number | null = null;
+
+  const setStatus = (status: ConnectionStatus) => {
+    options.onStatus?.(status);
+  };
+
+  const connect = () => {
+    if (cancelled) return;
+    setStatus(attempt === 0 ? 'connecting' : 'reconnecting');
+    try {
+      source = new EventSource(url);
+    } catch {
+      scheduleRetry();
+      return;
+    }
+    source.addEventListener(options.eventName, options.onMessage as EventListener);
+    source.onopen = () => {
+      attempt = 0;
+      setStatus('open');
+    };
+    source.onerror = () => {
+      if (!source) return;
+      source.close();
+      source = null;
+      scheduleRetry();
+    };
+  };
+
+  const scheduleRetry = () => {
+    if (cancelled) return;
+    const delay = Math.min(RECONNECT_BASE_MS * Math.pow(2, attempt), RECONNECT_CAP_MS);
+    attempt += 1;
+    setStatus('reconnecting');
+    retryTimer = window.setTimeout(connect, delay);
+  };
+
+  connect();
+
+  return () => {
+    cancelled = true;
+    setStatus('closed');
+    if (retryTimer !== null) {
+      window.clearTimeout(retryTimer);
+      retryTimer = null;
+    }
+    if (source) {
+      source.close();
+      source = null;
+    }
+  };
+};
+
+// Subscribe to SPA location changes. App.tsx parses paths manually (no
+// react-router at this level), so we synthesize location updates by listening
+// to popstate plus monkey-patching pushState/replaceState. Re-runs the
+// subscriber any time the URL changes.
+const useLocationSearch = (): string => {
+  const [search, setSearch] = React.useState(() =>
+    typeof window === 'undefined' ? '' : window.location.search,
+  );
+
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const update = () => setSearch(window.location.search);
+    const handlePop = () => update();
+    window.addEventListener('popstate', handlePop);
+    window.addEventListener('hashchange', handlePop);
+    // Also poll on a slow interval as a defensive net for SPA navigations
+    // that don't dispatch a synthetic event.
+    const id = window.setInterval(update, 500);
+    return () => {
+      window.removeEventListener('popstate', handlePop);
+      window.removeEventListener('hashchange', handlePop);
+      window.clearInterval(id);
+    };
+  }, []);
+
+  return search;
+};
 
 const formatDate = (value: number): string => {
   if (!Number.isFinite(value)) return '';
@@ -73,25 +191,28 @@ const Stat = ({ label, value, tone = 'default' }: { label: string; value: React.
   </div>
 );
 
-const ScoreMeter = ({ score }: { score: number }) => (
-  <div className="flex items-center gap-4">
-    <div className="relative grid size-24 place-items-center rounded-full border border-border bg-card">
-      <div
-        className="absolute inset-2 rounded-full"
-        style={{
-          background: `conic-gradient(var(--status-success) ${Math.max(0, Math.min(100, score))}%, var(--muted) 0)`,
-        }}
-      />
-      <div className="relative grid size-16 place-items-center rounded-full bg-background">
-        <span className="text-2xl font-semibold tracking-normal text-foreground">{score}</span>
+const ScoreMeter = ({ score }: { score: number }) => {
+  const clamped = Number.isFinite(score) ? Math.max(0, Math.min(100, score)) : 0;
+  return (
+    <div className="flex items-center gap-4">
+      <div className="relative grid size-24 place-items-center rounded-full border border-border bg-card">
+        <div
+          className="absolute inset-2 rounded-full"
+          style={{
+            background: `conic-gradient(var(--status-success) ${clamped}%, var(--muted) 0)`,
+          }}
+        />
+        <div className="relative grid size-16 place-items-center rounded-full bg-background">
+          <span className="text-2xl font-semibold tracking-normal text-foreground">{clamped}</span>
+        </div>
+      </div>
+      <div>
+        <div className="typography-ui-label text-muted-foreground">Karen rating</div>
+        <div className="text-2xl font-semibold tracking-normal text-foreground">{clamped}/100</div>
       </div>
     </div>
-    <div>
-      <div className="typography-ui-label text-muted-foreground">Karen rating</div>
-      <div className="text-2xl font-semibold tracking-normal text-foreground">{score}/100</div>
-    </div>
-  </div>
-);
+  );
+};
 
 const PublicPostCard = ({ post }: { post: PromptCourtPublicPost }) => (
   <article className="rounded-md border border-border bg-card p-4">
@@ -222,7 +343,7 @@ const audioEventForRunStatus = (status: string): KarenAudioEvent | null => {
   return null;
 };
 
-const LiveRunStream = ({ events }: { events: PromptCourtRunEvent[] }) => (
+const LiveRunStream = ({ events, connectionStatus }: { events: PromptCourtRunEvent[]; connectionStatus: ConnectionStatus }) => (
   <section className="rounded-md border border-border bg-card p-4">
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div>
@@ -231,9 +352,18 @@ const LiveRunStream = ({ events }: { events: PromptCourtRunEvent[] }) => (
           Live events from Karen runs: queued, judged, blocked, running, quiz required, rollback, and sync.
         </p>
       </div>
-      <span className="rounded-sm bg-muted px-2 py-1 typography-micro text-muted-foreground">
-        {events.length > 0 ? 'streaming' : 'waiting'}
-      </span>
+      <div className="flex items-center gap-2">
+        {connectionStatus === 'reconnecting' ? (
+          <span className="rounded-sm bg-[var(--status-warning)]/15 px-2 py-1 typography-micro font-medium text-[var(--status-warning)]">
+            reconnecting…
+          </span>
+        ) : null}
+        <span className="rounded-sm bg-muted px-2 py-1 typography-micro text-muted-foreground">
+          {connectionStatus === 'open'
+            ? events.length > 0 ? 'streaming' : 'waiting'
+            : connectionStatus === 'connecting' ? 'connecting' : connectionStatus === 'reconnecting' ? 'offline' : 'idle'}
+        </span>
+      </div>
     </div>
     <div className="mt-4 grid gap-2">
       {events.length > 0 ? events.slice(0, 8).map((event) => {
@@ -257,7 +387,7 @@ const LiveRunStream = ({ events }: { events: PromptCourtRunEvent[] }) => (
         );
       }) : (
         <div className="rounded-md border border-dashed border-border bg-background/50 p-4 typography-body text-muted-foreground">
-          Start a guarded run from the GUI or terminal. Karen will stream the verdict here.
+          No runs yet. Karen is bored. Type a prompt; let her decide if it's worth her time.
         </div>
       )}
     </div>
@@ -294,7 +424,7 @@ const RecentSessions = ({ profile }: { profile: PromptCourtProfile }) => (
           ) : null}
         </div>
       )) : (
-        <div className="p-4 typography-body text-muted-foreground">No sessions yet.</div>
+        <div className="p-4 typography-body text-muted-foreground">Nothing on the docket. Karen is suspicious.</div>
       )}
     </div>
   </section>
@@ -327,7 +457,7 @@ const ProfilePanel = ({ profile, overview }: { profile: PromptCourtProfile; over
           <Stat label="Files Survived" value={profile.stats.generatedFileCount} />
         </div>
       </div>
-      <KarenMascot className="hidden min-h-[300px] lg:block" mood={profile.stats.publicFailureCount > 0 ? 'mad' : 'calm'} />
+      <KarenMascot className="w-24 self-start lg:w-auto lg:min-h-[300px]" mood={profile.stats.publicFailureCount > 0 ? 'mad' : 'calm'} />
     </div>
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
       <Stat label="Users Ranked" value={overview?.totals.users ?? 0} />
@@ -355,6 +485,11 @@ const KarenAuthBar = () => {
             Sign in
           </button>
         </SignInButton>
+        <SignUpButton mode="modal">
+          <button type="button" className="rounded-md border border-border bg-foreground px-3 py-2 typography-ui-label text-background hover:opacity-90">
+            Sign up
+          </button>
+        </SignUpButton>
       </SignedOut>
       <SignedIn>
         <UserButton />
@@ -465,15 +600,79 @@ const fetchGuiRun = async (runId: string): Promise<GuiRun> => {
   return payload.run;
 };
 
+const KarenLoadingState: React.FC = () => (
+  <div className="min-h-[100dvh] bg-background text-foreground">
+    <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <a href="/" className="typography-ui-label text-primary hover:underline">Back to workspace</a>
+        <span className="typography-micro text-muted-foreground">Karen is warming up…</span>
+      </div>
+      <div className="flex items-start gap-4 rounded-md border border-border bg-card/60 p-5">
+        <KarenMascot className="w-24 lg:w-32" mood="calm" />
+        <div className="flex-1 space-y-3">
+          <div className="h-6 w-1/3 animate-pulse rounded bg-muted/60" />
+          <div className="h-4 w-1/2 animate-pulse rounded bg-muted/40" />
+          <div className="h-4 w-2/3 animate-pulse rounded bg-muted/40" />
+        </div>
+      </div>
+      <div className="h-32 animate-pulse rounded-md border border-border bg-card/40" />
+      <div className="h-48 animate-pulse rounded-md border border-border bg-card/40" />
+      <div className="h-32 animate-pulse rounded-md border border-border bg-card/40" />
+    </main>
+  </div>
+);
+
+const KarenEmptyState: React.FC<{ username: string }> = ({ username }) => (
+  <div className="min-h-[100dvh] bg-background text-foreground">
+    <main className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-12 sm:px-6 lg:px-8">
+      <div className="flex items-center justify-between">
+        <a href="/" className="typography-ui-label text-primary hover:underline">Back to workspace</a>
+        <KarenAuthBar />
+      </div>
+      <section className="rounded-md border border-border bg-card p-8 text-center">
+        <KarenMascot className="mx-auto w-32 lg:w-48" mood="mad" />
+        <h1 className="mt-4 text-3xl font-semibold tracking-normal text-foreground">No record on file</h1>
+        <p className="mt-3 typography-body text-muted-foreground">
+          Karen is suspicious. Run your first prompt — let her decide if you're worth recording.
+        </p>
+        <div className="mx-auto mt-6 max-w-md rounded-md border border-border bg-background p-3">
+          <div className="typography-micro text-muted-foreground">Install command</div>
+          <code className="mt-2 block rounded-sm bg-muted/45 px-2 py-2 font-mono text-xs text-foreground">
+            bun run install:karen
+          </code>
+        </div>
+        <p className="mt-4 typography-micro text-muted-foreground">@{username}</p>
+      </section>
+    </main>
+  </div>
+);
+
+const isProfileEmpty = (profile: PromptCourtProfile | null): boolean => {
+  if (!profile) return true;
+  const s = profile.stats;
+  return (
+    (s.totalSessions ?? 0) === 0
+    && (s.promotedRuns ?? 0) === 0
+    && (s.blockedPrompts ?? 0) === 0
+    && (s.generatedFileCount ?? 0) === 0
+    && (profile.recentSessions?.length ?? 0) === 0
+    && (profile.publicPosts?.length ?? 0) === 0
+  );
+};
+
 const PromptCourtLayout: React.FC<{
   profile: PromptCourtProfile | null;
   overview: PromptCourtOverview | null;
   error: string | null;
   source: 'cloud' | 'local';
-}> = ({ profile, overview, error, source }) => {
+  loading?: boolean;
+  username?: string;
+  isOwnProfile?: boolean;
+}> = ({ profile, overview, error, source, loading = false, username, isOwnProfile = true }) => {
   const [runPrompt, setRunPrompt] = React.useState('');
   const [runStatus, setRunStatus] = React.useState<string | null>(null);
   const [runEvents, setRunEvents] = React.useState<PromptCourtRunEvent[]>([]);
+  const [runStreamStatus, setRunStreamStatus] = React.useState<ConnectionStatus>('connecting');
   const [activeGuiRun, setActiveGuiRun] = React.useState<GuiRun | null>(null);
   const [activeGuiRunEvents, setActiveGuiRunEvents] = React.useState<GuiRunEvent[]>([]);
   const [isRunning, setIsRunning] = React.useState(false);
@@ -483,11 +682,12 @@ const PromptCourtLayout: React.FC<{
   const announcedRunEvents = React.useRef(new Set<string>());
   const feed = overview?.feed ?? [];
   const canRun = runPrompt.trim().length > 0 && !isRunning;
+  const locationSearch = useLocationSearch();
 
   React.useEffect(() => {
-    document.documentElement.classList.add('karen-document-scroll');
+    acquireKarenScrollClass();
     return () => {
-      document.documentElement.classList.remove('karen-document-scroll');
+      releaseKarenScrollClass();
     };
   }, []);
 
@@ -518,26 +718,29 @@ const PromptCourtLayout: React.FC<{
     void fetchPromptCourtRunEvents({ username, limit: 30 }).then((events) => addEvents(events, false)).catch(() => {});
 
     const params = new URLSearchParams({ username });
-    const events = new EventSource(`/api/promptcourt/runs/events?${params.toString()}`);
-    events.addEventListener('run', (message) => {
-      try {
-        addEvents([JSON.parse((message as MessageEvent).data) as PromptCourtRunEvent], true);
-      } catch {
-        // Ignore malformed stream events.
-      }
+    const cleanup = createReconnectingEventSource(`/api/promptcourt/runs/events?${params.toString()}`, {
+      eventName: 'run',
+      onStatus: (status) => {
+        if (cancelled) return;
+        setRunStreamStatus(status);
+      },
+      onMessage: (message) => {
+        try {
+          addEvents([JSON.parse((message as MessageEvent).data) as PromptCourtRunEvent], true);
+        } catch {
+          // Ignore malformed stream events.
+        }
+      },
     });
-    events.onerror = () => {
-      events.close();
-    };
     return () => {
       cancelled = true;
-      events.close();
+      cleanup();
     };
   }, [profile?.user.username]);
 
   React.useEffect(() => {
     if (typeof window === 'undefined') return;
-    const routeRunId = new URLSearchParams(window.location.search).get('run');
+    const routeRunId = new URLSearchParams(locationSearch).get('run');
     if (!routeRunId || loadedRunFromRoute.current === routeRunId) return;
     loadedRunFromRoute.current = routeRunId;
     setIsRunning(true);
@@ -569,58 +772,58 @@ const PromptCourtLayout: React.FC<{
         setRunStatus(nextError instanceof Error ? nextError.message : 'Karen could not open that guarded run.');
         setIsRunning(false);
       });
-  }, []);
+  }, [locationSearch]);
 
   React.useEffect(() => {
     if (!activeGuiRun?.id) return;
-    const events = new EventSource(`/api/promptcourt/gui-runs/${encodeURIComponent(activeGuiRun.id)}/events`);
-    events.addEventListener('gui-run', (message) => {
-      try {
-        const payload = JSON.parse((message as MessageEvent).data) as { event: GuiRunEvent; run: GuiRun };
-        setActiveGuiRun(payload.run);
-        setActiveGuiRunEvents((current) => {
-          const byId = new Map(current.map((event) => [event.id, event]));
-          byId.set(payload.event.id, payload.event);
-          return [...byId.values()].sort((left, right) => right.createdAt - left.createdAt).slice(0, 12);
-        });
-        setRunEvents((current) => {
-          const byId = new Map(current.map((event) => [event.id, event]));
-          byId.set(payload.event.id, payload.event);
-          return [...byId.values()].sort((left, right) => right.createdAt - left.createdAt).slice(0, 30);
-        });
-        if (payload.run.status === 'quiz_required') {
-          setIsRunning(false);
-          setRunStatus('Karen reached the quiz gate. Time to defend the diff.');
-          if (payload.run.quiz && payload.run.quiz.questions.length > 0 && lastAutoOpenedRunId.current !== payload.run.id) {
-            lastAutoOpenedRunId.current = payload.run.id;
-            setQuizModalOpen(true);
+    const cleanup = createReconnectingEventSource(
+      `/api/promptcourt/gui-runs/${encodeURIComponent(activeGuiRun.id)}/events`,
+      {
+        eventName: 'gui-run',
+        onMessage: (message) => {
+          try {
+            const payload = JSON.parse((message as MessageEvent).data) as { event: GuiRunEvent; run: GuiRun };
+            setActiveGuiRun(payload.run);
+            setActiveGuiRunEvents((current) => {
+              const byId = new Map(current.map((event) => [event.id, event]));
+              byId.set(payload.event.id, payload.event);
+              return [...byId.values()].sort((left, right) => right.createdAt - left.createdAt).slice(0, 12);
+            });
+            setRunEvents((current) => {
+              const byId = new Map(current.map((event) => [event.id, event]));
+              byId.set(payload.event.id, payload.event);
+              return [...byId.values()].sort((left, right) => right.createdAt - left.createdAt).slice(0, 30);
+            });
+            if (payload.run.status === 'quiz_required') {
+              setIsRunning(false);
+              setRunStatus('Karen reached the quiz gate. Time to defend the diff.');
+              if (payload.run.quiz && payload.run.quiz.questions.length > 0 && lastAutoOpenedRunId.current !== payload.run.id) {
+                lastAutoOpenedRunId.current = payload.run.id;
+                setQuizModalOpen(true);
+              }
+            } else if (payload.run.status === 'blocked') {
+              setIsRunning(false);
+              setRunStatus('Karen blocked that prompt before it touched the code.');
+            } else if (payload.run.status === 'failed') {
+              setIsRunning(false);
+              setRunStatus(payload.run.error || 'Karen GUI run failed.');
+            } else if (payload.run.status === 'completed') {
+              setIsRunning(false);
+              const completedResult = payload.run.result;
+              const completedMessage = completedResult && 'message' in completedResult
+                ? completedResult.message
+                : 'Karen approved — no quiz required.';
+              setRunStatus(completedMessage);
+            } else {
+              setRunStatus(payload.event.label);
+            }
+          } catch {
+            // Ignore malformed stream events.
           }
-        } else if (payload.run.status === 'blocked') {
-          setIsRunning(false);
-          setRunStatus('Karen blocked that prompt before it touched the code.');
-        } else if (payload.run.status === 'failed') {
-          setIsRunning(false);
-          setRunStatus(payload.run.error || 'Karen GUI run failed.');
-        } else if (payload.run.status === 'completed') {
-          setIsRunning(false);
-          const completedResult = payload.run.result;
-          const completedMessage = completedResult && 'message' in completedResult
-            ? completedResult.message
-            : 'Karen approved — no quiz required.';
-          setRunStatus(completedMessage);
-        } else {
-          setRunStatus(payload.event.label);
-        }
-      } catch {
-        // Ignore malformed stream events.
-      }
-    });
-    events.onerror = () => {
-      events.close();
-    };
-    return () => {
-      events.close();
-    };
+        },
+      },
+    );
+    return cleanup;
   }, [activeGuiRun?.id]);
 
   const handleRun = async () => {
@@ -641,6 +844,34 @@ const PromptCourtLayout: React.FC<{
       setIsRunning(false);
     }
   };
+
+  // Read-only branch: visitor is looking at someone else's profile. Render the
+  // public profile shell with no launch controls, terminal bridge, or auth
+  // mutations.
+  if (!isOwnProfile) {
+    if (loading) {
+      return <PublicProfileLoading username={username || ''} />;
+    }
+    if (!profile) {
+      return <PublicProfileNotFound username={username || ''} />;
+    }
+    return <PublicProfileView profile={profile} username={username || profile.user.username} />;
+  }
+
+  // Loading: data is still in flight. Show skeleton, not empty state.
+  if (loading && !profile && !overview) {
+    return <KarenLoadingState />;
+  }
+
+  // Empty: data resolved but Karen has nothing on this user yet.
+  if (!loading && isProfileEmpty(profile)) {
+    return (
+      <>
+        <AuthBinder />
+        <KarenEmptyState username={username || profile?.user.username || getPromptCourtUsername()} />
+      </>
+    );
+  }
 
   return (
     <div className="min-h-[100dvh] bg-background text-foreground">
@@ -755,7 +986,7 @@ const PromptCourtLayout: React.FC<{
           </section>
         ) : null}
         <div className="grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
-          <LiveRunStream events={runEvents} />
+          <LiveRunStream events={runEvents} connectionStatus={runStreamStatus} />
           <section className="rounded-md border border-border bg-card p-4">
             <h2 className="text-xl font-semibold tracking-normal text-foreground">Terminal Bridge</h2>
             <p className="mt-2 typography-body text-muted-foreground">
@@ -781,7 +1012,7 @@ const PromptCourtLayout: React.FC<{
               </div>
             ) : (
               <div className="rounded-md border border-border bg-card p-6 typography-body text-muted-foreground">
-                No public failures yet.
+                The graveyard's empty. For now. Karen is patient.
               </div>
             )}
           </section>
@@ -806,15 +1037,28 @@ const PromptCourtLayout: React.FC<{
   );
 };
 
-const LocalPromptCourtPage: React.FC<{ username?: string | null }> = ({ username }) => {
+const POLL_BASE_MS = 5000;
+const POLL_MAX_MS = 60000;
+
+const LocalPromptCourtPage: React.FC<{ username?: string | null; isOwnProfile?: boolean }> = ({ username, isOwnProfile = true }) => {
   const [overview, setOverview] = React.useState<PromptCourtOverview | null>(null);
   const [profile, setProfile] = React.useState<PromptCourtProfile | null>(null);
   const [error, setError] = React.useState<string | null>(null);
+  const [loaded, setLoaded] = React.useState(false);
   const resolvedUsername = username || getPromptCourtUsername();
 
   React.useEffect(() => {
     let cancelled = false;
+    let timer: number | null = null;
+    let currentDelay = POLL_BASE_MS;
+
     const run = async () => {
+      // Skip polling when the tab is hidden to save bandwidth; resume on
+      // visibilitychange.
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
+        scheduleNext(currentDelay);
+        return;
+      }
       try {
         const [nextOverview, nextProfile] = await Promise.all([
           fetchPromptCourtOverview(),
@@ -824,41 +1068,144 @@ const LocalPromptCourtPage: React.FC<{ username?: string | null }> = ({ username
           setOverview(nextOverview);
           setProfile(nextProfile);
           setError(null);
+          setLoaded(true);
+          currentDelay = POLL_BASE_MS;
         }
       } catch (nextError) {
         if (!cancelled) {
           setError(nextError instanceof Error ? nextError.message : 'Failed to load Karen');
+          setLoaded(true);
+          currentDelay = Math.min(currentDelay * 2, POLL_MAX_MS);
         }
       }
+      if (!cancelled) {
+        scheduleNext(currentDelay);
+      }
     };
+
+    const scheduleNext = (delay: number) => {
+      if (cancelled) return;
+      timer = window.setTimeout(() => {
+        void run();
+      }, delay);
+    };
+
+    const handleVisibility = () => {
+      if (typeof document === 'undefined' || document.visibilityState !== 'visible') return;
+      if (timer !== null) {
+        window.clearTimeout(timer);
+        timer = null;
+      }
+      void run();
+    };
+
     void run();
-    const interval = window.setInterval(run, 5000);
+    document.addEventListener('visibilitychange', handleVisibility);
     return () => {
       cancelled = true;
-      window.clearInterval(interval);
+      if (timer !== null) {
+        window.clearTimeout(timer);
+      }
+      document.removeEventListener('visibilitychange', handleVisibility);
     };
   }, [resolvedUsername]);
 
-  return <PromptCourtLayout profile={profile} overview={overview} error={error} source="local" />;
+  return (
+    <PromptCourtLayout
+      profile={profile}
+      overview={overview}
+      error={error}
+      source="local"
+      loading={!loaded}
+      username={resolvedUsername}
+      isOwnProfile={isOwnProfile}
+    />
+  );
 };
 
-const CloudPromptCourtPage: React.FC<{ username?: string | null }> = ({ username }) => {
-  const resolvedUsername = username || getPromptCourtUsername();
+const CloudPromptCourtPage: React.FC<{ username?: string | null; viewerUsername: string; isOwnProfile: boolean }> = ({
+  username,
+  viewerUsername,
+  isOwnProfile,
+}) => {
+  const resolvedUsername = username || viewerUsername;
   const overview = useQuery(api.karen.overview) as PromptCourtOverview | undefined;
-  const profile = useQuery(api.karen.profile, { username: resolvedUsername }) as PromptCourtProfile | undefined;
+  // For other people's profiles, use the public-only query. Convex agent ships
+  // `profilePublic` separately; until `_generated/api.d.ts` includes it, the
+  // cast below silences the missing-key error. Returns `null` for placeholder /
+  // suspended / private profiles.
+  const apiAny = api as any;
+  const ownProfile = useQuery(
+    apiAny.karen.profile,
+    isOwnProfile ? { username: resolvedUsername } : 'skip' as any,
+  ) as PromptCourtProfile | undefined;
+  const publicProfile = useQuery(
+    apiAny.karen.profilePublic ?? apiAny.karen.profile,
+    !isOwnProfile ? { username: resolvedUsername } : 'skip' as any,
+  ) as PromptCourtProfile | null | undefined;
+  const profile = isOwnProfile ? ownProfile : publicProfile;
+  const loading = profile === undefined;
   return (
     <PromptCourtLayout
       profile={profile ?? null}
       overview={overview ?? null}
       error={null}
       source="cloud"
+      loading={loading}
+      username={resolvedUsername}
+      isOwnProfile={isOwnProfile}
     />
   );
 };
 
+const ClerkViewerUsername: React.FC<{ onChange: (value: string) => void }> = ({ onChange }) => {
+  const { isSignedIn, user } = useUser();
+  React.useEffect(() => {
+    if (!isSignedIn || !user) return;
+    const next = (user.username
+      || user.primaryEmailAddress?.emailAddress?.split('@')[0]
+      || user.id
+      || getPromptCourtUsername()).toString();
+    onChange(next);
+  }, [isSignedIn, onChange, user]);
+  return null;
+};
+
+// Hook that returns the viewer's username. Always reads the local fallback;
+// when Clerk is configured, a child component pushes the Clerk identity into
+// the state on sign-in. Keeps hook order stable in both auth-on/off modes.
+const useViewerUsername = (): [string, React.ReactNode] => {
+  const [viewerUsername, setViewerUsername] = React.useState<string>(() => getPromptCourtUsername());
+  const sync = React.useCallback((value: string) => {
+    setViewerUsername((current) => (current === value ? current : value));
+  }, []);
+  const clerkSync = isKarenAuthConfigured ? <ClerkViewerUsername onChange={sync} /> : null;
+  return [viewerUsername, clerkSync];
+};
+
 export const PromptCourtPage: React.FC<{ username?: string | null }> = (props) => {
+  // Reading viewer identity needs Clerk (when configured) and the local fallback.
+  // We always render the same component tree to keep hook order stable.
+  const [viewerUsername, clerkSync] = useViewerUsername();
+  const requestedUsername = (props.username || viewerUsername).toString();
+  const isOwnProfile = !props.username || requestedUsername === viewerUsername;
+
   if (isKarenCloudConfigured) {
-    return <CloudPromptCourtPage {...props} />;
+    return (
+      <>
+        {clerkSync}
+        <CloudPromptCourtPage
+          username={props.username}
+          viewerUsername={viewerUsername}
+          isOwnProfile={isOwnProfile}
+        />
+      </>
+    );
   }
-  return <LocalPromptCourtPage {...props} />;
+  return (
+    <>
+      {clerkSync}
+      <LocalPromptCourtPage username={props.username} isOwnProfile={isOwnProfile} />
+    </>
+  );
 };

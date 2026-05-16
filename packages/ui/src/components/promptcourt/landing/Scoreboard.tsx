@@ -4,7 +4,6 @@ import type { PromptCourtOverview, PromptCourtProfile, PromptCourtPublicPost } f
 import { isKarenCloudConfigured } from '@/lib/karenCloudConfig';
 import { LiveLeaderboardShowcase, type LiveLeaderboardDeveloper, type LiveLeaderboardEvent } from '../LiveLeaderboardShowcase';
 import { BadPromptGraveyard } from '../BadPromptGraveyard';
-import { KarenShameTweetWall } from './KarenShameTweetWall';
 
 const timeAgo = (value: number) => {
   if (!Number.isFinite(value)) return 'unknown';
@@ -104,17 +103,13 @@ export const Scoreboard: React.FC<{ overview?: PromptCourtOverview | null }> = (
         developers={developers}
         events={events}
         live={isKarenCloudConfigured}
-        allowPreviewData={!hasLiveData}
         updatedLabel={hasLiveData ? 'karen.overview live' : 'no public records yet'}
         title={hasLiveData ? 'Live leaderboard for people who read the diff.' : 'Leaderboard ready for first public run.'}
-        subtitle={hasLiveData ? 'PromptCourt standings are pulled from Convex public records.' : 'Convex is configured but no public sessions are synced yet.'}
+        subtitle={hasLiveData ? 'PromptCourt standings are pulled from Convex public records.' : 'Karen is wired up. Nobody has shipped a public run yet. Be the first name on the wall.'}
       />
 
-      <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
-        <div className="rounded-md border border-[#d8d8d8] bg-white p-4">
-          <BadPromptGraveyard posts={posts} limit={4} title="Latest public prompt charges" />
-        </div>
-        <KarenShameTweetWall />
+      <div className="rounded-md border border-[#d8d8d8] bg-white p-4">
+        <BadPromptGraveyard posts={posts} limit={6} title="Recent Public Failures" />
       </div>
     </div>
   );

@@ -1,5 +1,81 @@
-import { internalMutation, mutation, query } from './_generated/server';
+import { internalMutation, internalQuery, mutation, query } from './_generated/server';
 import { v } from 'convex/values';
+
+// ---------------------------------------------------------------------------
+// Device-link / scoreboard helpers
+// ---------------------------------------------------------------------------
+
+// Alphabet excludes I, O, 0, 1 to reduce read-aloud ambiguity.
+const USER_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+
+export const generateUserCode = () => {
+  const buffer = new Uint8Array(8);
+  // Convex runtime exposes Web Crypto; fall back to Math.random if for some reason it is missing.
+  const cryptoRef: any = (globalThis as any).crypto;
+  if (cryptoRef?.getRandomValues) {
+    cryptoRef.getRandomValues(buffer);
+  } else {
+    for (let i = 0; i < buffer.length; i += 1) buffer[i] = Math.floor(Math.random() * 256);
+  }
+  let out = '';
+  for (let i = 0; i < buffer.length; i += 1) {
+    out += USER_CODE_ALPHABET[buffer[i] % USER_CODE_ALPHABET.length];
+  }
+  return `${out.slice(0, 4)}-${out.slice(4, 8)}`;
+};
+
+export const sha256Hex = async (input: string): Promise<string> => {
+  const data = new TextEncoder().encode(input);
+  const digest = await (globalThis as any).crypto.subtle.digest('SHA-256', data);
+  const bytes = new Uint8Array(digest);
+  let hex = '';
+  for (let i = 0; i < bytes.length; i += 1) {
+    hex += bytes[i].toString(16).padStart(2, '0');
+  }
+  return hex;
+};
+
+export const timingSafeEqual = (a: string, b: string): boolean => {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i += 1) {
+    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return diff === 0;
+};
+
+const randomBase64UrlBytes = (byteLength: number): string => {
+  const buffer = new Uint8Array(byteLength);
+  const cryptoRef: any = (globalThis as any).crypto;
+  if (cryptoRef?.getRandomValues) {
+    cryptoRef.getRandomValues(buffer);
+  } else {
+    for (let i = 0; i < byteLength; i += 1) buffer[i] = Math.floor(Math.random() * 256);
+  }
+  let binary = '';
+  for (let i = 0; i < buffer.length; i += 1) binary += String.fromCharCode(buffer[i]);
+  const b64 = btoa(binary);
+  return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+};
+
+export const weekKeyFor = (ts: number): string => {
+  // ISO 8601 week-numbering year + week. Returns 'YYYY-WNN'.
+  const date = new Date(ts);
+  const utc = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  // Thursday in current week decides the year.
+  const day = utc.getUTCDay() || 7;
+  utc.setUTCDate(utc.getUTCDate() + 4 - day);
+  const yearStart = new Date(Date.UTC(utc.getUTCFullYear(), 0, 1));
+  const weekNumber = Math.ceil((((utc.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+  return `${utc.getUTCFullYear()}-W${String(weekNumber).padStart(2, '0')}`;
+};
+
+// Forward-declared; defined after computeProfile below.
+let recomputeUserCachesImpl: ((ctx: any, userId: any) => Promise<void>) | null = null;
+const recomputeUserCaches = async (ctx: any, userId: any) => {
+  if (recomputeUserCachesImpl) await recomputeUserCachesImpl(ctx, userId);
+};
 
 const normalizeUsername = (value: string) => {
   const normalized = value
@@ -178,32 +254,32 @@ const ensureUser = async (ctx: any, input: {
       return existingByClerk._id;
     }
 
+    // SECURITY: do not claim local placeholders. A fresh Clerk user gets a fresh users row
+    // even if a `local:<username>` placeholder exists with the same normalized username.
+    // Placeholders are wiped via the admin `wipe-placeholders` migration; until then we
+    // pick a non-colliding username to avoid the `by_username` uniqueness conflict.
     const placeholder = await findLocalPlaceholderUser(ctx, username);
+    let insertUsername = username;
     if (placeholder) {
-      await ctx.db.patch(placeholder._id, stripUndefined({
-        clerkUserId,
-        clerkOrgId: input.clerkOrgId,
-        username,
-        displayName: input.displayName ?? placeholder.displayName,
-        imageUrl: input.imageUrl ?? placeholder.imageUrl,
-        email: input.email,
-        authProvider: 'clerk',
-        role: placeholder.role ?? defaultUserRole(clerkUserId),
-        status: placeholder.status ?? 'active',
-        publicProfileEnabled: placeholder.publicProfileEnabled ?? true,
-        source: input.source ?? 'clerk',
-        firstSeenAt: placeholder.firstSeenAt ?? placeholder.createdAt ?? now,
-        lastSeenAt: now,
-        updatedAt: now,
-      }));
-      return placeholder._id;
+      // Find a free variant: <username>-2, -3, etc. Bounded loop keeps mutation deterministic.
+      for (let suffix = 2; suffix < 100; suffix += 1) {
+        const candidate = normalizeUsername(`${username}-${suffix}`);
+        const exists = await ctx.db
+          .query('users')
+          .withIndex('by_username', (q: any) => q.eq('username', candidate))
+          .first();
+        if (!exists) {
+          insertUsername = candidate;
+          break;
+        }
+      }
     }
 
     return ctx.db.insert('users', stripUndefined({
       clerkUserId,
       clerkOrgId: input.clerkOrgId,
-      username,
-      displayName: input.displayName ?? username,
+      username: insertUsername,
+      displayName: input.displayName ?? insertUsername,
       imageUrl: input.imageUrl,
       email: input.email,
       authProvider: 'clerk',
@@ -257,6 +333,34 @@ const ensureLocalUser = async (ctx: any, usernameValue: string) => {
   return ensureUser(ctx, { username, source: 'local_ingest' });
 };
 
+const identityUsername = (identity: any) => normalizeUsername(
+  identity?.nickname
+  || identity?.preferredUsername
+  || identity?.username
+  || identity?.name
+  || String(identity?.email || '').split('@')[0]
+  || identity?.subject
+  || 'local-user',
+);
+
+const findUserByIdentity = async (ctx: any, identity: any) => {
+  if (!identity?.subject) return null;
+  return ctx.db
+    .query('users')
+    .withIndex('by_clerk_user', (q: any) => q.eq('clerkUserId', identity.subject))
+    .unique();
+};
+
+const ensureUserFromIdentity = async (ctx: any, identity: any) => ensureUser(ctx, stripUndefined({
+  clerkUserId: identity.subject,
+  clerkOrgId: (identity as any).orgId,
+  username: identityUsername(identity),
+  displayName: (identity as any).name,
+  imageUrl: (identity as any).pictureUrl,
+  email: (identity as any).email,
+  source: 'clerk' as const,
+}));
+
 const requireAdmin = async (ctx: any) => {
   const identity = await ctx.auth.getUserIdentity();
   const allowed = adminSubjects();
@@ -301,7 +405,7 @@ const rewardListForProfile = ({
   generatedFileCount: number;
   lifetimeGrannySkips?: number;
 }) => {
-  const rewards = [];
+  const rewards: Array<{ id: string; label: string; tone: 'good' | 'bad' }> = [];
   if (promptScores.length > 0) rewards.push({ id: 'first-verdict', label: 'First Verdict', tone: 'good' });
   if (promptScores.some((score) => score >= 85)) rewards.push({ id: 'criteria-enjoyer', label: 'Criteria Enjoyer', tone: 'good' });
   if (lifetimeGrannySkips >= 1) rewards.push({ id: 'granny-skip', label: 'Granny Skip Earned', tone: 'good' });
@@ -362,24 +466,6 @@ const emptyProfile = (usernameValue: string, overrides: Record<string, unknown> 
     createdAt: Date.now(),
     ...overrides,
   }, [], []);
-};
-
-const identityUsername = (identity: any) => normalizeUsername(
-  identity?.nickname
-  || identity?.preferredUsername
-  || identity?.username
-  || identity?.name
-  || String(identity?.email || '').split('@')[0]
-  || identity?.subject
-  || 'local-user',
-);
-
-const findUserByIdentity = async (ctx: any, identity: any) => {
-  if (!identity?.subject) return null;
-  return ctx.db
-    .query('users')
-    .withIndex('by_clerk_user', (q: any) => q.eq('clerkUserId', identity.subject))
-    .unique();
 };
 
 const computeProfile = (user: any, sessions: any[], publicPosts: any[]) => {
@@ -452,6 +538,49 @@ const computeProfile = (user: any, sessions: any[], publicPosts: any[]) => {
     recentSessions: [...visibleSessions].sort((left, right) => right.createdAt - left.createdAt).slice(0, 20).map(sessionView),
     publicPosts: [...visiblePosts].sort((left, right) => right.createdAt - left.createdAt).slice(0, 20).map(publicPostView),
   };
+};
+
+// Recompute and persist the leaderboard caches on the users row after a write that affects
+// this user. Reads at most 500 sessions and 500 public posts (capped) via the by_user_created
+// and by_username_created indexes for cheap recent-window scans.
+recomputeUserCachesImpl = async (ctx: any, userId: any) => {
+  const user = await ctx.db.get(userId);
+  if (!user) return;
+  const [sessions, posts] = await Promise.all([
+    ctx.db.query('sessions')
+      .withIndex('by_user_created', (q: any) => q.eq('userId', userId))
+      .order('desc')
+      .take(500),
+    ctx.db.query('publicPosts')
+      .withIndex('by_username_created', (q: any) => q.eq('username', (user as any).username))
+      .order('desc')
+      .take(500),
+  ]);
+  const profile = computeProfile(user, sessions, posts);
+  const now = Date.now();
+  const currentWeek = weekKeyFor(now);
+  const weekStart = (() => {
+    // Sunday-aligned 7-day window for the cached weeklyScore. We additionally key by ISO week.
+    return now - 7 * 24 * 60 * 60 * 1000;
+  })();
+  const weekSessions = sessions.filter((s: any) => s.createdAt >= weekStart && visibleSession(s));
+  const weekScores = weekSessions
+    .map((s: any) => Number(s.promptScore))
+    .filter((n: number) => Number.isFinite(n));
+  const weeklyScore = weekScores.length === 0
+    ? 0
+    : Math.round(weekScores.reduce((sum: number, n: number) => sum + n, 0) / weekScores.length);
+
+  await ctx.db.patch(userId, stripUndefined({
+    disciplineScore: profile.stats.disciplineScore,
+    currentStreak: profile.stats.currentStreak,
+    longestStreak: profile.stats.longestStreak,
+    weeklyScore,
+    weeklySessions: weekSessions.length,
+    weekKey: currentWeek,
+    lastScoredAt: now,
+    updatedAt: now,
+  }));
 };
 
 const collectVisiblePublicPosts = async (ctx: any, limit = 50) => {
@@ -1187,6 +1316,11 @@ export const ingestEvent = internalMutation({
     kind: v.union(v.literal('blocked_prompt'), v.literal('approved_prompt'), v.literal('quiz_result')),
     session: sessionValidator,
     publicPost: v.optional(publicPostValidator),
+    // Identity attached by /karen/ingest after verifying a device bearer token. When present,
+    // these override whatever clerkUserId/username arrived in the payload — the token is the
+    // source of truth for "who owns this row", not the wire body.
+    authClerkUserId: v.optional(v.string()),
+    authUserId: v.optional(v.id('users')),
   },
   handler: async (ctx, args) => {
     const eventId = normalizeOptionalString(args.eventId)
@@ -1199,20 +1333,36 @@ export const ingestEvent = internalMutation({
     if (existingEvent) {
       return { ok: true, deduped: true, eventId };
     }
-    await ctx.db.insert('ingestEvents', { eventId, processedAt: Date.now() });
+    // ingestEvents row is written below once the sessionId is known so the wipe migration can
+    // sweep events alongside their owning session.
 
-    const username = normalizeUsername(args.session.username);
-    const userId = args.session.clerkUserId
-      ? await ensureUser(ctx, {
-        username,
-        clerkUserId: args.session.clerkUserId,
-        clerkOrgId: args.session.clerkOrgId,
-        displayName: args.session.displayName,
-        imageUrl: args.session.imageUrl,
-        email: args.session.email,
-        source: 'http_ingest',
-      })
-      : await ensureLocalUser(ctx, username);
+    // SECURITY: when the HTTP layer verified a device token, use that identity unconditionally.
+    // Otherwise fall back to the payload (shared-secret server-to-server path).
+    const authedClerkUserId = normalizeOptionalString(args.authClerkUserId);
+    let resolvedUserId: any = args.authUserId ?? null;
+    let resolvedClerkUserId: string | undefined = authedClerkUserId;
+    let resolvedUsername: string | undefined;
+
+    if (resolvedUserId) {
+      const authedUser = await ctx.db.get(resolvedUserId);
+      if (!authedUser) throw new Error('Authenticated user not found');
+      resolvedUsername = (authedUser as any).username;
+    }
+
+    const username = resolvedUsername ?? normalizeUsername(args.session.username);
+    const effectiveClerkUserId = resolvedClerkUserId ?? args.session.clerkUserId;
+    const userId = resolvedUserId
+      ?? (effectiveClerkUserId
+        ? await ensureUser(ctx, {
+          username,
+          clerkUserId: effectiveClerkUserId,
+          clerkOrgId: args.session.clerkOrgId,
+          displayName: args.session.displayName,
+          imageUrl: args.session.imageUrl,
+          email: args.session.email,
+          source: 'http_ingest',
+        })
+        : await ensureLocalUser(ctx, username));
     const now = Date.now();
     const localSessionId = args.session.localSessionId;
     const opencodeSessionId = args.session.opencodeSessionId;
@@ -1241,11 +1391,16 @@ export const ingestEvent = internalMutation({
         .first();
     }
 
+    // SECURITY: prevent cross-user hijack of an existing session row via guessed localSessionId.
+    if (session && String((session as any).userId) !== String(userId)) {
+      throw new Error('Session ownership mismatch');
+    }
+
     const patch = stripUndefined({
       userId,
       localSessionId,
       opencodeSessionId,
-      clerkUserId: args.session.clerkUserId,
+      clerkUserId: effectiveClerkUserId,
       clerkOrgId: args.session.clerkOrgId,
       username,
       status: args.session.status,
@@ -1275,6 +1430,10 @@ export const ingestEvent = internalMutation({
           .withIndex('by_username_local_post', (q) => q.eq('username', username).eq('localPostId', publicPost.localPostId))
           .first()
         : null;
+      // SECURITY: a publicPosts row keyed on (username, localPostId) must belong to this user.
+      if (existingPost && existingPost.userId && String(existingPost.userId) !== String(userId)) {
+        throw new Error('Public post ownership mismatch');
+      }
       const postPromptRedaction = redactText(publicPost.promptExcerpt);
       const postReasonRedaction = redactList(publicPost.failureReasons);
       const rewriteRedaction = redactText(publicPost.suggestedRewrite);
@@ -1287,7 +1446,7 @@ export const ingestEvent = internalMutation({
       const publicPostPatch = stripUndefined({
         sessionId,
         userId,
-        clerkUserId: publicPost.clerkUserId ?? args.session.clerkUserId,
+        clerkUserId: effectiveClerkUserId ?? publicPost.clerkUserId,
         clerkOrgId: publicPost.clerkOrgId ?? args.session.clerkOrgId,
         username,
         localPostId: publicPost.localPostId,
@@ -1312,6 +1471,545 @@ export const ingestEvent = internalMutation({
       }
     }
 
+    await ctx.db.insert('ingestEvents', { eventId, processedAt: Date.now(), sessionId });
+
+    // Refresh leaderboard caches for this user. Best-effort; bounded reads.
+    await recomputeUserCaches(ctx, userId);
+
     return { ok: true, deduped: false, eventId, kind: args.kind, sessionId };
+  },
+});
+
+// ===========================================================================
+// Device-link flow (RFC 8628)
+//
+// Wire shape:
+//   POST /karen/auth/device/start   -> { deviceCode, userCode, verificationUri, verificationUriComplete, expiresIn, interval }
+//   POST /karen/auth/device/poll    -> { status: 'authorization_pending' | 'slow_down' | 'expired_token' | 'access_denied' }
+//                                       or { connected: true, token, user }
+//   Vercel /link page (Clerk-authed): calls approveDeviceLink({ userCode }) on the user's signed-in session.
+//
+// The opaque deviceCode and bearer token are never stored — only their sha256 hashes. The TUI
+// holds the opaque token in its OS keychain and presents it as `Authorization: Bearer <token>`
+// to /karen/ingest. The HTTP route hashes and looks up `deviceTokens.by_token_hash`.
+// ===========================================================================
+
+const DEVICE_CODE_TTL_MS = 10 * 60 * 1000;
+const DEVICE_POLL_MIN_INTERVAL_MS = 4_500;
+const DEVICE_POLL_SLOW_DOWN_AFTER = 3;
+
+export const startDeviceLink = internalMutation({
+  args: {
+    deviceCodeHash: v.string(),
+    userCode: v.string(),
+    deviceLabel: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const expiresAt = now + DEVICE_CODE_TTL_MS;
+    await ctx.db.insert('deviceLinkCodes', stripUndefined({
+      userCode: args.userCode,
+      deviceCodeHash: args.deviceCodeHash,
+      status: 'pending' as const,
+      deviceLabel: args.deviceLabel,
+      createdAt: now,
+      expiresAt,
+      pollAttempts: 0,
+    }));
+    return { userCode: args.userCode, expiresAt };
+  },
+});
+
+export const userCodeExists = internalQuery({
+  args: { userCode: v.string() },
+  handler: async (ctx, { userCode }) => {
+    const row = await ctx.db
+      .query('deviceLinkCodes')
+      .withIndex('by_user_code', (q) => q.eq('userCode', userCode))
+      .unique();
+    return Boolean(row);
+  },
+});
+
+export const pollDeviceCode = internalMutation({
+  args: { deviceCodeHash: v.string() },
+  handler: async (ctx, { deviceCodeHash }) => {
+    const row = await ctx.db
+      .query('deviceLinkCodes')
+      .withIndex('by_device_code_hash', (q) => q.eq('deviceCodeHash', deviceCodeHash))
+      .unique();
+    if (!row) return { status: 'access_denied' as const };
+
+    const now = Date.now();
+    if (row.expiresAt < now) {
+      if (row.status === 'pending') {
+        await ctx.db.patch(row._id, { status: 'expired' as const });
+      }
+      return { status: 'expired_token' as const };
+    }
+
+    // slow_down: only enforced when the device polls faster than the advertised interval.
+    if (row.lastPollAt && now - row.lastPollAt < DEVICE_POLL_MIN_INTERVAL_MS && row.pollAttempts >= DEVICE_POLL_SLOW_DOWN_AFTER) {
+      await ctx.db.patch(row._id, {
+        pollAttempts: row.pollAttempts + 1,
+        lastPollAt: now,
+      });
+      return { status: 'slow_down' as const };
+    }
+
+    await ctx.db.patch(row._id, {
+      pollAttempts: row.pollAttempts + 1,
+      lastPollAt: now,
+    });
+
+    if (row.status === 'approved') {
+      return {
+        status: 'ready' as const,
+        clerkUserId: row.clerkUserId,
+        clerkOrgId: row.clerkOrgId,
+        deviceLabel: row.deviceLabel,
+      };
+    }
+    if (row.status === 'denied') return { status: 'access_denied' as const };
+    if (row.status === 'exchanged') return { status: 'access_denied' as const };
+    if (row.status === 'expired') return { status: 'expired_token' as const };
+    return { status: 'authorization_pending' as const };
+  },
+});
+
+export const exchangeDeviceCode = internalMutation({
+  args: {
+    deviceCodeHash: v.string(),
+    opaqueToken: v.string(),
+    tokenHash: v.string(),
+  },
+  handler: async (ctx, { deviceCodeHash, opaqueToken, tokenHash }) => {
+    const row = await ctx.db
+      .query('deviceLinkCodes')
+      .withIndex('by_device_code_hash', (q) => q.eq('deviceCodeHash', deviceCodeHash))
+      .unique();
+    if (!row) throw new Error('access_denied');
+    if (row.status === 'exchanged') throw new Error('access_denied');
+    if (row.status !== 'approved') throw new Error('authorization_pending');
+    if (row.expiresAt < Date.now()) {
+      await ctx.db.patch(row._id, { status: 'expired' as const });
+      throw new Error('expired_token');
+    }
+    if (!row.clerkUserId) throw new Error('access_denied');
+
+    const user = await ctx.db
+      .query('users')
+      .withIndex('by_clerk_user', (q) => q.eq('clerkUserId', row.clerkUserId!))
+      .unique();
+    if (!user) throw new Error('access_denied');
+
+    const now = Date.now();
+    await ctx.db.insert('deviceTokens', stripUndefined({
+      userId: user._id,
+      clerkUserId: row.clerkUserId,
+      tokenHash,
+      deviceLabel: row.deviceLabel,
+      createdAt: now,
+    }));
+    await ctx.db.patch(row._id, {
+      status: 'exchanged' as const,
+      exchangedAt: now,
+    });
+
+    return {
+      token: opaqueToken,
+      user: {
+        id: user._id,
+        username: user.username,
+        displayName: user.displayName ?? user.username,
+        imageUrl: user.imageUrl,
+      },
+    };
+  },
+});
+
+export const verifyDeviceToken = internalQuery({
+  args: { tokenHash: v.string() },
+  handler: async (ctx, { tokenHash }) => {
+    const token = await ctx.db
+      .query('deviceTokens')
+      .withIndex('by_token_hash', (q) => q.eq('tokenHash', tokenHash))
+      .unique();
+    if (!token) return null;
+    if (token.revokedAt) return null;
+    const user = await ctx.db.get(token.userId);
+    if (!user) return null;
+    if ((user as any).status && (user as any).status !== 'active') return null;
+    return {
+      tokenId: token._id,
+      userId: token.userId,
+      clerkUserId: token.clerkUserId,
+      username: (user as any).username,
+    };
+  },
+});
+
+export const touchDeviceToken = internalMutation({
+  args: { tokenId: v.id('deviceTokens') },
+  handler: async (ctx, { tokenId }) => {
+    await ctx.db.patch(tokenId, { lastUsedAt: Date.now() });
+  },
+});
+
+export const approveDeviceLink = mutation({
+  args: { userCode: v.string() },
+  handler: async (ctx, { userCode }) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error('Not authenticated');
+    const row = await ctx.db
+      .query('deviceLinkCodes')
+      .withIndex('by_user_code', (q) => q.eq('userCode', userCode))
+      .unique();
+    if (!row) throw new Error('Invalid code');
+    if (row.status !== 'pending') throw new Error('Code already used or expired');
+    if (row.expiresAt < Date.now()) {
+      await ctx.db.patch(row._id, { status: 'expired' as const });
+      throw new Error('Code expired');
+    }
+    const userId = await ensureUserFromIdentity(ctx, identity);
+    await ctx.db.patch(row._id, stripUndefined({
+      status: 'approved' as const,
+      clerkUserId: identity.subject,
+      clerkOrgId: (identity as any).orgId,
+      approvedAt: Date.now(),
+    }));
+    const user = await ctx.db.get(userId);
+    return { ok: true, username: (user as any)?.username, deviceLabel: row.deviceLabel };
+  },
+});
+
+export const denyDeviceLink = mutation({
+  args: { userCode: v.string() },
+  handler: async (ctx, { userCode }) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error('Not authenticated');
+    const row = await ctx.db
+      .query('deviceLinkCodes')
+      .withIndex('by_user_code', (q) => q.eq('userCode', userCode))
+      .unique();
+    if (!row) throw new Error('Invalid code');
+    if (row.status === 'exchanged') throw new Error('Code already exchanged');
+    await ctx.db.patch(row._id, { status: 'denied' as const });
+    return { ok: true };
+  },
+});
+
+// ===========================================================================
+// Rate limit (lightweight; backs the device-flow endpoints)
+// ===========================================================================
+
+const RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000;
+const RATE_LIMIT_LOCK_MS = 10 * 60 * 1000;
+const RATE_LIMIT_MAX_PER_IP = 20;
+const RATE_LIMIT_MAX_NO_IP = 5;
+
+export const checkIpRateLimit = internalMutation({
+  args: { key: v.string() },
+  handler: async (ctx, { key }) => {
+    const now = Date.now();
+    const max = key === 'no-ip' ? RATE_LIMIT_MAX_NO_IP : RATE_LIMIT_MAX_PER_IP;
+    const existing = await ctx.db
+      .query('ipRateLimits')
+      .withIndex('by_key', (q) => q.eq('key', key))
+      .unique();
+
+    if (existing?.lockedUntil && existing.lockedUntil > now) {
+      return { allowed: false, retryAfterMs: existing.lockedUntil - now };
+    }
+    if (!existing || now - existing.windowStart > RATE_LIMIT_WINDOW_MS) {
+      if (existing) {
+        await ctx.db.patch(existing._id, { count: 1, windowStart: now, lockedUntil: undefined });
+      } else {
+        await ctx.db.insert('ipRateLimits', { key, count: 1, windowStart: now });
+      }
+      return { allowed: true, retryAfterMs: 0 };
+    }
+    if (existing.count + 1 > max) {
+      await ctx.db.patch(existing._id, {
+        count: existing.count + 1,
+        lockedUntil: now + RATE_LIMIT_LOCK_MS,
+      });
+      return { allowed: false, retryAfterMs: RATE_LIMIT_LOCK_MS };
+    }
+    await ctx.db.patch(existing._id, { count: existing.count + 1 });
+    return { allowed: true, retryAfterMs: 0 };
+  },
+});
+
+// ===========================================================================
+// Public queries for the scoreboard / profile / share card
+// ===========================================================================
+
+const isLocalPlaceholder = (user: any) => String(user?.clerkUserId || '').startsWith('local:');
+
+const toLeaderboardRow = (user: any, rank: number) => ({
+  rank,
+  username: user.username,
+  displayName: user.displayName ?? user.username,
+  imageUrl: user.imageUrl,
+  disciplineScore: Math.round(Number(user.disciplineScore ?? 0)),
+  currentStreak: Number(user.currentStreak ?? 0),
+  longestStreak: Number(user.longestStreak ?? 0),
+  weeklyScore: Math.round(Number(user.weeklyScore ?? 0)),
+  weeklySessions: Number(user.weeklySessions ?? 0),
+  weekKey: user.weekKey ?? null,
+  level: levelForScore(Math.round(Number(user.disciplineScore ?? 0))),
+});
+
+export const profilePublic = query({
+  args: { username: v.string() },
+  handler: async (ctx, { username }) => {
+    const normalized = normalizeUsername(username);
+    const user = await ctx.db
+      .query('users')
+      .withIndex('by_username', (q) => q.eq('username', normalized))
+      .first();
+    if (!user) return null;
+    if (isLocalPlaceholder(user)) return null;
+    if ((user.status ?? 'active') !== 'active') return null;
+    if (user.publicProfileEnabled === false) return null;
+
+    const [sessions, posts] = await Promise.all([
+      ctx.db.query('sessions')
+        .withIndex('by_user_created', (q) => q.eq('userId', user._id))
+        .order('desc')
+        .take(40),
+      ctx.db.query('publicPosts')
+        .withIndex('by_username_created', (q) => q.eq('username', user.username))
+        .order('desc')
+        .take(40),
+    ]);
+    const profile = computeProfile(user, sessions, posts);
+    return {
+      user: {
+        ...profile.user,
+        bio: user.bio ?? null,
+        links: user.links ?? null,
+      },
+      stats: {
+        ...profile.stats,
+        weeklyScore: Math.round(Number(user.weeklyScore ?? 0)),
+        weeklySessions: Number(user.weeklySessions ?? 0),
+        weekKey: user.weekKey ?? null,
+      },
+      rewards: profile.rewards,
+      recentSessions: profile.recentSessions,
+      publicPosts: profile.publicPosts,
+    };
+  },
+});
+
+export const leaderboardAllTime = query({
+  args: { limit: v.optional(v.number()) },
+  handler: async (ctx, { limit }) => {
+    const take = Math.max(1, Math.min(100, Math.floor(limit ?? 25)));
+    const rows = await ctx.db
+      .query('users')
+      .withIndex('by_public_score', (q) => q.eq('publicProfileEnabled', true).eq('status', 'active'))
+      .order('desc')
+      .take(take * 2);
+    const filtered = rows
+      .filter((row) => !isLocalPlaceholder(row))
+      .slice(0, take);
+    return filtered.map((user, index) => toLeaderboardRow(user, index + 1));
+  },
+});
+
+export const leaderboardWeekly = query({
+  args: {
+    weekKey: v.optional(v.string()),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, { weekKey, limit }) => {
+    const take = Math.max(1, Math.min(100, Math.floor(limit ?? 25)));
+    const week = normalizeOptionalString(weekKey) ?? weekKeyFor(Date.now());
+    const rows = await ctx.db
+      .query('users')
+      .withIndex('by_public_weekly_score', (q) => q
+        .eq('publicProfileEnabled', true)
+        .eq('status', 'active')
+        .eq('weekKey', week))
+      .order('desc')
+      .take(take * 2);
+    const filtered = rows
+      .filter((row) => !isLocalPlaceholder(row))
+      .slice(0, take);
+    return {
+      weekKey: week,
+      rows: filtered.map((user, index) => toLeaderboardRow(user, index + 1)),
+    };
+  },
+});
+
+export const shareCardData = query({
+  args: { username: v.string() },
+  handler: async (ctx, { username }) => {
+    const normalized = normalizeUsername(username);
+    const user = await ctx.db
+      .query('users')
+      .withIndex('by_username', (q) => q.eq('username', normalized))
+      .first();
+    if (!user) return null;
+    if (isLocalPlaceholder(user)) return null;
+    if ((user.status ?? 'active') !== 'active') return null;
+    if (user.publicProfileEnabled === false) return null;
+
+    // Inline rank: scan up to 500 ranked rows to find this user's position. Bounded; the
+    // far-tail case returns null and the UI can render an "Unranked" badge.
+    const ranked = await ctx.db
+      .query('users')
+      .withIndex('by_public_score', (q) => q.eq('publicProfileEnabled', true).eq('status', 'active'))
+      .order('desc')
+      .take(500);
+    let rank: number | null = null;
+    for (let i = 0; i < ranked.length; i += 1) {
+      if (String(ranked[i]._id) === String(user._id)) {
+        rank = i + 1;
+        break;
+      }
+    }
+
+    const rewards = await ctx.db
+      .query('rewards')
+      .withIndex('by_user', (q) => q.eq('userId', user._id))
+      .take(10);
+    const topReward = rewards.find((r) => r.tone === 'good') ?? rewards[0];
+
+    return {
+      username: user.username,
+      displayName: user.displayName ?? user.username,
+      imageUrl: user.imageUrl,
+      disciplineScore: Math.round(Number(user.disciplineScore ?? 0)),
+      level: levelForScore(Math.round(Number(user.disciplineScore ?? 0))),
+      longestStreak: Number(user.longestStreak ?? 0),
+      currentStreak: Number(user.currentStreak ?? 0),
+      rank,
+      topRewardLabel: topReward?.label ?? null,
+    };
+  },
+});
+
+export const updateMyProfile = mutation({
+  args: {
+    bio: v.optional(v.string()),
+    links: v.optional(v.object({
+      github: v.optional(v.string()),
+      x: v.optional(v.string()),
+      website: v.optional(v.string()),
+    })),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error('Not authenticated');
+    const user = await findUserByIdentity(ctx, identity);
+    if (!user) throw new Error('User not found — call upsertCurrentUser first');
+
+    const sanitizeLink = (value: string | undefined): string | undefined => {
+      if (typeof value !== 'string') return undefined;
+      const trimmed = value.trim();
+      if (!trimmed) return undefined;
+      if (trimmed.length > 200) return undefined;
+      if (!/^https?:\/\//i.test(trimmed)) return undefined;
+      return trimmed;
+    };
+
+    const bio = typeof args.bio === 'string'
+      ? args.bio.trim().slice(0, 200)
+      : undefined;
+    const links = args.links
+      ? stripUndefined({
+        github: sanitizeLink(args.links.github),
+        x: sanitizeLink(args.links.x),
+        website: sanitizeLink(args.links.website),
+      })
+      : undefined;
+
+    await ctx.db.patch(user._id, stripUndefined({
+      bio,
+      links,
+      updatedAt: Date.now(),
+    }));
+    return { ok: true };
+  },
+});
+
+// ===========================================================================
+// Wipe local placeholders (one-shot operator migration)
+// ===========================================================================
+
+export const wipeLocalPlaceholders = internalMutation({
+  args: { actor: v.string(), dryRun: v.optional(v.boolean()) },
+  handler: async (ctx, { actor, dryRun }) => {
+    const users = await ctx.db.query('users').collect();
+    const placeholders = users.filter(isLocalPlaceholder);
+
+    let sessionsDeleted = 0;
+    let postsDeleted = 0;
+    let rewardsDeleted = 0;
+    let ingestEventsDeleted = 0;
+    let usersDeleted = 0;
+
+    for (const user of placeholders) {
+      const [sessions, posts, rewards] = await Promise.all([
+        ctx.db.query('sessions')
+          .withIndex('by_user', (q) => q.eq('userId', user._id))
+          .collect(),
+        ctx.db.query('publicPosts')
+          .withIndex('by_username', (q) => q.eq('username', user.username))
+          .collect(),
+        ctx.db.query('rewards')
+          .withIndex('by_user', (q) => q.eq('userId', user._id))
+          .collect(),
+      ]);
+
+      for (const session of sessions) {
+        const sessionIngestEvents = await ctx.db
+          .query('ingestEvents')
+          .withIndex('by_session', (q) => q.eq('sessionId', session._id))
+          .collect();
+        for (const evt of sessionIngestEvents) {
+          if (!dryRun) await ctx.db.delete(evt._id);
+          ingestEventsDeleted += 1;
+        }
+        if (!dryRun) await ctx.db.delete(session._id);
+        sessionsDeleted += 1;
+      }
+      for (const post of posts) {
+        if (!post.userId || String(post.userId) === String(user._id)) {
+          if (!dryRun) await ctx.db.delete(post._id);
+          postsDeleted += 1;
+        }
+      }
+      for (const reward of rewards) {
+        if (!dryRun) await ctx.db.delete(reward._id);
+        rewardsDeleted += 1;
+      }
+      if (!dryRun) await ctx.db.delete(user._id);
+      usersDeleted += 1;
+    }
+
+    const result = {
+      usersDeleted,
+      sessionsDeleted,
+      postsDeleted,
+      rewardsDeleted,
+      ingestEventsDeleted,
+      dryRun: Boolean(dryRun),
+    };
+    await auditAdminAction(
+      ctx,
+      'wipe_local_placeholders',
+      'users',
+      undefined,
+      actor,
+      dryRun ? 'dry-run' : undefined,
+      result,
+    );
+    return result;
   },
 });

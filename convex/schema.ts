@@ -19,13 +19,28 @@ export default defineSchema({
     moderatedAt: v.optional(v.number()),
     moderatedBy: v.optional(v.string()),
     moderationReason: v.optional(v.string()),
+    bio: v.optional(v.string()),
+    links: v.optional(v.object({
+      github: v.optional(v.string()),
+      x: v.optional(v.string()),
+      website: v.optional(v.string()),
+    })),
+    disciplineScore: v.optional(v.number()),
+    currentStreak: v.optional(v.number()),
+    longestStreak: v.optional(v.number()),
+    weeklyScore: v.optional(v.number()),
+    weeklySessions: v.optional(v.number()),
+    weekKey: v.optional(v.string()),
+    lastScoredAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
     .index('by_clerk_user', ['clerkUserId'])
     .index('by_username', ['username'])
     .index('by_status', ['status'])
-    .index('by_role', ['role']),
+    .index('by_role', ['role'])
+    .index('by_public_score', ['publicProfileEnabled', 'status', 'disciplineScore'])
+    .index('by_public_weekly_score', ['publicProfileEnabled', 'status', 'weekKey', 'weeklyScore']),
 
   sessions: defineTable({
     userId: v.id('users'),
@@ -56,7 +71,8 @@ export default defineSchema({
     .index('by_opencode_session', ['opencodeSessionId'])
     .index('by_created', ['createdAt'])
     .index('by_moderation', ['moderationStatus'])
-    .index('by_privacy', ['privacyMode']),
+    .index('by_privacy', ['privacyMode'])
+    .index('by_user_created', ['userId', 'createdAt']),
 
   publicPosts: defineTable({
     sessionId: v.optional(v.id('sessions')),
@@ -84,6 +100,7 @@ export default defineSchema({
     .index('by_created', ['createdAt'])
     .index('by_username', ['username'])
     .index('by_username_local_post', ['username', 'localPostId'])
+    .index('by_username_created', ['username', 'createdAt'])
     .index('by_moderation', ['moderationStatus'])
     .index('by_visibility', ['visibility']),
 
@@ -129,5 +146,51 @@ export default defineSchema({
   ingestEvents: defineTable({
     eventId: v.string(),
     processedAt: v.number(),
-  }).index('by_eventId', ['eventId']),
+    sessionId: v.optional(v.id('sessions')),
+  })
+    .index('by_eventId', ['eventId'])
+    .index('by_session', ['sessionId']),
+
+  deviceLinkCodes: defineTable({
+    userCode: v.string(),
+    deviceCodeHash: v.string(),
+    status: v.union(
+      v.literal('pending'),
+      v.literal('approved'),
+      v.literal('exchanged'),
+      v.literal('expired'),
+      v.literal('denied'),
+    ),
+    clerkUserId: v.optional(v.string()),
+    clerkOrgId: v.optional(v.string()),
+    deviceLabel: v.optional(v.string()),
+    createdAt: v.number(),
+    expiresAt: v.number(),
+    approvedAt: v.optional(v.number()),
+    exchangedAt: v.optional(v.number()),
+    pollAttempts: v.number(),
+    lastPollAt: v.optional(v.number()),
+  })
+    .index('by_user_code', ['userCode'])
+    .index('by_device_code_hash', ['deviceCodeHash'])
+    .index('by_status', ['status']),
+
+  deviceTokens: defineTable({
+    userId: v.id('users'),
+    clerkUserId: v.string(),
+    tokenHash: v.string(),
+    deviceLabel: v.optional(v.string()),
+    createdAt: v.number(),
+    lastUsedAt: v.optional(v.number()),
+    revokedAt: v.optional(v.number()),
+  })
+    .index('by_token_hash', ['tokenHash'])
+    .index('by_user', ['userId']),
+
+  ipRateLimits: defineTable({
+    key: v.string(),
+    count: v.number(),
+    windowStart: v.number(),
+    lockedUntil: v.optional(v.number()),
+  }).index('by_key', ['key']),
 });
