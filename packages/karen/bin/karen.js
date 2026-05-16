@@ -21,6 +21,18 @@ import {
   clearAuth,
   runLoginFlow,
 } from '../lib/karen-auth.js';
+import {
+  playKarenLine,
+  prewarmCommonLines,
+  voiceUsage,
+  muteSession as muteVoiceSession,
+  unmuteSession as unmuteVoiceSession,
+  isSessionMuted as isVoiceSessionMuted,
+  setSessionVoiceOverride,
+  getSessionVoiceId,
+  sampleRandomLine,
+  listVoiceCues,
+} from '../lib/karen-voice.js';
 // withFileLock exported from karen-auth.js for wrapping settings.json read-modify-write;
 // not yet wired around ensureGuiProjectDirectory / writeDefaultModel / addTerminalAudioUsage.
 import {
@@ -141,170 +153,63 @@ const systemBeep = (count = 1) => {
   }
 };
 
-const speakKaren = (message) => {
-  if (!speechAllowed()) return;
-  const text = String(message).replace(/^KAREN:\s*/i, '').slice(0, 180);
-  if (process.platform === 'darwin') {
-    spawnSilent('say', ['-v', process.env.KAREN_SAY_VOICE || 'Samantha', text]);
-  } else if (process.platform === 'linux') {
-    spawnSilent('spd-say', [text]);
-  } else if (process.platform === 'win32') {
-    spawnSilent('powershell.exe', [
-      '-NoProfile',
-      '-Command',
-      `Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; $s.Speak(${JSON.stringify(text)})`,
-    ]);
-  }
-};
-
-const terminalAudioCacheDir = () => process.env.KAREN_AUDIO_CACHE_DIR || path.join(openchamberDataDir, 'karen-audio-cache', 'terminal');
-const terminalAudioUsagePath = () => path.join(openchamberDataDir, 'karen-elevenlabs-usage.json');
-const terminalTodayKey = () => new Date().toISOString().slice(0, 10);
+// speakKaren, terminalAudio* helpers, and playTerminalAudioFile moved to
+// packages/karen/lib/karen-voice.js. terminalAudioCap stays here only so
+// printAudioStatus can show the daily-cap env value alongside the other
+// kill switches.
 const terminalAudioCap = () => {
   const parsed = Number(process.env.KAREN_ELEVENLABS_DAILY_CAP || process.env.KAREN_AUDIO_DAILY_CAP || 20000);
   return Number.isFinite(parsed) && parsed >= 0 ? Math.trunc(parsed) : 20000;
 };
 
-const readTerminalAudioUsage = () => {
-  try {
-    const parsed = JSON.parse(fs.readFileSync(terminalAudioUsagePath(), 'utf8'));
-    if (parsed?.day === terminalTodayKey()) {
-      return {
-        day: parsed.day,
-        requests: Number(parsed.requests) || 0,
-        characterCost: Number(parsed.characterCost) || 0,
-      };
-    }
-  } catch {
-    // Missing usage file means today has not spent audio yet.
-  }
-  return { day: terminalTodayKey(), requests: 0, characterCost: 0 };
-};
-
-const writeTerminalAudioUsage = (usage) => writeJson(terminalAudioUsagePath(), usage);
-
-const addTerminalAudioUsage = (cost) => {
-  const usage = readTerminalAudioUsage();
-  const next = {
-    day: terminalTodayKey(),
-    requests: usage.requests + 1,
-    characterCost: usage.characterCost + Math.max(0, Math.trunc(Number(cost) || 0)),
+// Build a voice context from the current profile. Karen-voice uses these
+// fields to pick mood-appropriate lines (template tokens) and ElevenLabs
+// voice_settings (angry / standard / deadpan tiers).
+const buildVoiceContext = (extras = {}) => {
+  let profile = null;
+  try { profile = store.getProfile(username()); } catch {}
+  const stats = profile?.stats || {};
+  return {
+    name: profile?.user?.username || username(),
+    username: profile?.user?.username || username(),
+    score: stats.disciplineScore ?? 50,
+    currentStreak: stats.currentStreak ?? 0,
+    longestStreak: stats.longestStreak ?? 0,
+    level: stats.level || 'standing',
+    publicFailureCount: stats.publicFailureCount ?? 0,
+    hour: new Date().getHours(),
+    ...extras,
   };
-  writeTerminalAudioUsage(next);
-  return next;
 };
 
-const terminalAudioHash = (value) => {
-  let hash = 2166136261;
-  for (let index = 0; index < value.length; index += 1) {
-    hash ^= value.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  return (hash >>> 0).toString(16).padStart(8, '0');
-};
-
-const playTerminalAudioFile = (filePath) => {
-  if (process.platform === 'darwin') return spawnSilent('afplay', [filePath]);
-  if (process.platform === 'linux') {
-    return spawnSilent('ffplay', ['-nodisp', '-autoexit', '-loglevel', 'quiet', filePath])
-      || spawnSilent('mpg123', ['-q', filePath]);
-  }
-  if (process.platform === 'win32') {
-    return spawnSilent('powershell.exe', [
-      '-NoProfile',
-      '-Command',
-      `Add-Type -AssemblyName PresentationCore; $p = New-Object System.Windows.Media.MediaPlayer; $p.Open([Uri]::new(${JSON.stringify(filePath)})); $p.Play(); Start-Sleep -Milliseconds 3500`,
-    ]);
-  }
-  return false;
-};
-
-const elevenLabsCueLine = (cue, message) => {
-  const cleaned = String(message || '').replace(/^KAREN:\s*/i, '').slice(0, 220);
-  if (cue === 'long-prompt') return cleaned || 'That prompt has a basement. Split it up.';
-  if (cue === 'prompt-blocked') return cleaned || 'Absolutely not. Rewrite the prompt with files, constraints, and tests.';
-  if (cue === 'quiz-wrong') return 'Wrong. Sandbox deleted. Read the code before you defend it.';
-  if (cue === 'quiz-pass') return 'Fine. You read the diff. The patch may live.';
-  return '';
-};
-
-const playElevenLabsCue = async (cue, message = '') => {
-  if (!elevenLabsTerminalAllowed()) return;
-  if (['quiz-start', 'quiz-question'].includes(cue)) return;
-  const text = elevenLabsCueLine(cue, message);
-  if (!text) return;
-
-  const payload = {
-    text,
-    model_id: process.env.ELEVENLABS_MODEL_ID || 'eleven_flash_v2_5',
-    voice_settings: {
-      stability: Number(process.env.ELEVENLABS_STABILITY || 0.62),
-      similarity_boost: Number(process.env.ELEVENLABS_SIMILARITY_BOOST || 0.78),
-      style: Number(process.env.ELEVENLABS_STYLE || 0.34),
-      use_speaker_boost: true,
-      speed: Number(process.env.ELEVENLABS_SPEED || 0.92),
-    },
-  };
-  const voiceId = process.env.ELEVENLABS_VOICE_ID || '21m00Tcm4TlvDq8ikWAM';
-  const cacheKey = terminalAudioHash(JSON.stringify({ voiceId, payload }));
-  const audioPath = path.join(terminalAudioCacheDir(), `${cacheKey}.mp3`);
-  if (fs.existsSync(audioPath)) {
-    playTerminalAudioFile(audioPath);
-    return;
-  }
-
-  const usage = readTerminalAudioUsage();
-  const dailyCap = terminalAudioCap();
-  if (dailyCap > 0 && usage.characterCost + text.length > dailyCap) {
-    speakKaren(text);
-    return;
-  }
-
-  try {
-    const url = `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}?output_format=mp3_44100_128`;
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'xi-api-key': process.env.ELEVENLABS_API_KEY,
-        'content-type': 'application/json',
-        accept: 'audio/mpeg',
-      },
-      body: JSON.stringify(payload),
-    });
-    if (!response.ok) throw new Error(`ElevenLabs ${response.status}`);
-    const buffer = Buffer.from(await response.arrayBuffer());
-    fs.mkdirSync(path.dirname(audioPath), { recursive: true });
-    fs.writeFileSync(audioPath, buffer);
-    addTerminalAudioUsage(Number(response.headers.get('character-cost')) || text.length);
-    playTerminalAudioFile(audioPath);
-  } catch {
-    speakKaren(text);
-  }
-};
-
-const playAudioCue = (cue, message = '') => {
+const playAudioCue = (cue, message = '', ctx = null) => {
   if (!audioAllowed()) return;
-  void playElevenLabsCue(cue, message);
+  // Voice (ElevenLabs line pools, caption print, SFX bed) lives in karen-voice.js.
+  // We still drive the terminal-bell + system-beep layer here.
+  if (!['quiz-start', 'quiz-question'].includes(cue)) {
+    void playKarenLine(cue, ctx || buildVoiceContext({ legacyMessage: message }));
+  }
   if (cue === 'long-prompt') {
     bellBurst(6, 55);
     systemBeep(2);
-    speakKaren(message);
   } else if (cue === 'prompt-blocked') {
     bellBurst(4, 70);
     systemBeep(2);
-    speakKaren(message || 'Prompt blocked. Rewrite it with actual acceptance criteria.');
   } else if (cue === 'quiz-start') {
     bellBurst(2, 120);
     systemBeep(1);
   } else if (cue === 'quiz-wrong') {
     bellBurst(7, 45);
     systemBeep(2);
-    speakKaren('Thrown out. Read the code next time.');
   } else if (cue === 'quiz-pass') {
     bellBurst(3, 100);
     systemBeep(1);
   } else if (cue === 'quiz-question') {
     terminalBell();
+  } else if (cue === 'streak-break') {
+    bellBurst(2, 200);
+  } else if (cue === 'level-up') {
+    bellBurst(3, 80);
   }
 };
 
@@ -644,7 +549,7 @@ const VALID_OPENCODE_VERBS = new Set([
 const KAREN_BUILTIN_COMMANDS = new Set([
   'help', 'commands', 'gui', 'setup', 'audio', 'feed', 'profile', 'diff',
   'quit', 'exit', 'q', 'bye', 'login', 'logout', 'sorry', 'please',
-  'karen', 'git-gud',
+  'karen', 'git-gud', 'voice',
 ]);
 
 const drawShell = () => {
@@ -1270,6 +1175,10 @@ const printHelp = () => {
   line('  /session         manage OpenCode sessions');
   line('  /stats           show token and cost stats');
   line('  /audio           show terminal audio controls');
+  line('  /voice           Karen voice controls (sample | mute | unmute | voice <id> | reset | usage | cues)');
+  line('  /login           link this device to a cloud profile (Clerk)');
+  line('  /logout          forget the current cloud profile binding');
+  line('  /sorry /please /karen   easter eggs');
   line('  /feed            show latest public shame records');
   line('  /profile         show your Karen profile');
   line('  /diff            show current git diff stat');
@@ -1360,15 +1269,21 @@ const runSetupWizard = async (rl, { force = false } = {}) => {
   }
 };
 
-const printFeed = () => {
-  const posts = store.getFeed(8);
+const printFeed = (count = 8) => {
+  const limit = Math.max(1, Math.min(50, Number(count) || 8));
+  const posts = store.getFeed(limit);
   if (posts.length === 0) {
-    line(color('No public shame records yet.', 'green'));
+    line(color('The graveyard is empty. For now. Karen is patient.', 'green'));
     return;
   }
   for (const post of posts) {
     line(`${color(post.title, 'red')} ${color(`@${post.username}`, 'gray')}`);
     line(`  ${post.promptExcerpt || ''}`);
+  }
+  // Karen narrates the latest entry aloud.
+  const head = posts[0];
+  if (head) {
+    void playKarenLine('feed-narrate', buildVoiceContext({ feedTitle: head.title }));
   }
 };
 
@@ -1379,6 +1294,58 @@ const printProfile = () => {
   line(`Prompt avg: ${profile.stats.averagePromptScore}/100  Public failures: ${profile.stats.publicFailureCount}`);
   line(`Current streak: ${profile.stats.currentStreak}  Longest: ${profile.stats.longestStreak}`);
   line(`Rewards: ${profile.rewards.map((reward) => reward.label).join(', ') || 'none'}`);
+  // Karen narrates the score with a tone matching the band (angry / standard / deadpan).
+  void playKarenLine('profile-read', buildVoiceContext());
+};
+
+// /voice subcommand: sample | mute | unmute | usage | voice <id> | reset
+const handleVoiceCommand = async (rest) => {
+  const sub = (rest[0] || 'usage').toLowerCase();
+  if (sub === 'mute') {
+    muteVoiceSession();
+    line(color('Karen voice muted for this session. Use /voice unmute to bring her back.', 'amber'));
+    return;
+  }
+  if (sub === 'unmute' || sub === 'on') {
+    unmuteVoiceSession();
+    line(color('Karen voice unmuted.', 'green'));
+    return;
+  }
+  if (sub === 'sample') {
+    const cue = await sampleRandomLine(buildVoiceContext());
+    line(color(`(played a random "${cue}" line)`, 'gray'));
+    return;
+  }
+  if (sub === 'voice') {
+    const id = rest[1];
+    if (!id) {
+      line(color(`Current voice id: ${getSessionVoiceId()}`, 'cyan'));
+      line(color('Usage: /voice voice <ElevenLabs voice id>', 'gray'));
+      return;
+    }
+    setSessionVoiceOverride(id);
+    line(color(`Voice override set for this session: ${id}`, 'green'));
+    return;
+  }
+  if (sub === 'reset') {
+    setSessionVoiceOverride(null);
+    line(color(`Voice override cleared. Karen will use the default (${getSessionVoiceId()}).`, 'green'));
+    return;
+  }
+  if (sub === 'cues') {
+    line(color('Karen voice cues:', 'cyan'));
+    for (const cue of listVoiceCues()) line(`  ${cue}`);
+    return;
+  }
+  // default: usage
+  const u = voiceUsage();
+  line(color('Karen voice', 'cyan'));
+  line(`  muted          ${isVoiceSessionMuted() ? 'yes' : 'no'}`);
+  line(`  voice id       ${getSessionVoiceId()}`);
+  line(`  requests today ${u.requests}`);
+  line(`  characters     ${u.characterCost} / ${u.cap || 'unlimited'}`);
+  line(`  state          ${u.state}`);
+  line(color('Subcommands: /voice sample | mute | unmute | voice <id> | reset | usage | cues', 'gray'));
 };
 
 const handleCommand = async (raw, rl) => {
@@ -1410,7 +1377,8 @@ const handleCommand = async (raw, rl) => {
   else if (command === 'db') await proxyOpencode(['db', ...rest]);
   else if (command === 'acp') await proxyOpencode(['acp', ...rest]);
   else if (command === 'audio') printAudioStatus();
-  else if (command === 'feed') printFeed();
+  else if (command === 'voice') await handleVoiceCommand(rest);
+  else if (command === 'feed') printFeed(rest[0]);
   else if (command === 'profile') printProfile();
   else if (command === 'diff') {
     const stat = run('git', ['diff', '--stat']);
@@ -1422,12 +1390,15 @@ const handleCommand = async (raw, rl) => {
     if (result?.token) {
       saveAuth(result);
       line(color(`Linked. Karen knows you as @${result.username}.`, 'green'));
+      void playAudioCue('login-success', '', buildVoiceContext({ name: result.username }));
     } else {
       line(color('Login did not complete. Run /login again when you are ready.', 'amber'));
     }
   } else if (command === 'logout') {
+    const priorName = username();
     clearAuth();
     line(color('Karen forgets you. For now.', 'gray'));
+    void playAudioCue('logout', '', buildVoiceContext({ name: priorName }));
   } else if (command === 'sorry') {
     line(color(sorryReply(), 'amber'));
   } else if (command === 'please') {
@@ -1483,6 +1454,7 @@ const main = async () => {
       const evaluation = evaluatePrompt(prompt);
       printVerdict(prompt, evaluation);
       if (shouldRunAgentForEvaluation(evaluation)) {
+        const beforeProfile = store.getProfile(username());
         const session = store.recordApprovedPrompt({
           username: username(),
           prompt: redactPublicText(prompt, 1200),
@@ -1490,6 +1462,23 @@ const main = async () => {
           sessionId: `karen_${Date.now()}`,
         });
         await runAgent(prompt, session, rl);
+        // After-run state transitions: fire streak-break and level-up voice cues
+        // when the relevant stats actually changed across this prompt.
+        try {
+          const afterProfile = store.getProfile(username());
+          const beforeStreak = Number(beforeProfile?.stats?.currentStreak) || 0;
+          const afterStreak = Number(afterProfile?.stats?.currentStreak) || 0;
+          if (beforeStreak >= 3 && afterStreak === 0) {
+            void playAudioCue('streak-break', '', buildVoiceContext({ streak: beforeStreak }));
+          }
+          const beforeLevel = String(beforeProfile?.stats?.level || '');
+          const afterLevel = String(afterProfile?.stats?.level || '');
+          if (beforeLevel && afterLevel && beforeLevel !== afterLevel) {
+            void playAudioCue('level-up', '', buildVoiceContext({ level: afterLevel }));
+          }
+        } catch {
+          // After-state inspection is best-effort; never block the agent flow.
+        }
       }
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
@@ -1510,6 +1499,12 @@ const main = async () => {
   }
 
   drawShell();
+
+  // Karen greets the user once per shell session. Fire-and-forget; gated by
+  // KAREN_AUDIO and the per-cue mute. Pre-warm the most-likely cues in the
+  // background so the first verdict has zero ElevenLabs round-trip latency.
+  void playAudioCue('startup', '', buildVoiceContext());
+  void prewarmCommonLines(buildVoiceContext());
 
   let active = true;
   while (active) {
