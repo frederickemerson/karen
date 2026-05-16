@@ -7,17 +7,72 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 
 const CONFIG_HOME = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
 const AUTH_DIR = path.join(CONFIG_HOME, 'openchamber');
 const AUTH_PATH = path.join(AUTH_DIR, 'karen-cloud-auth.json');
 
-const CONVEX_BASE = () => (
-  process.env.CONVEX_HTTP_ACTIONS_URL
-  || process.env.VITE_CONVEX_SITE_URL
-  || ''
-).replace(/\/+$/, '');
+// Walk up from karen-auth.js until we find a package.json with `workspaces` (the monorepo root).
+// Used to source repo-root .env files so karen (run via the installed shim, outside of vite) still
+// sees CONVEX_HTTP_ACTIONS_URL, VITE_CONVEX_SITE_URL, KAREN_CLOUD_INGEST_SECRET, etc.
+const findRepoRoot = () => {
+  let dir = path.dirname(fileURLToPath(import.meta.url));
+  for (let i = 0; i < 8; i += 1) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'));
+      if (parsed && parsed.workspaces) return dir;
+    } catch {
+      // missing/invalid package.json at this level; keep walking up.
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return null;
+};
+
+const parseEnvFile = (filePath) => {
+  const out = {};
+  let text;
+  try { text = fs.readFileSync(filePath, 'utf8'); } catch { return out; }
+  for (const rawLine of text.split(/\r?\n/)) {
+    if (!rawLine || rawLine.trim().startsWith('#')) continue;
+    const match = rawLine.match(/^\s*(?:export\s+)?([A-Z_][A-Z0-9_]*)\s*=\s*(.*?)\s*$/);
+    if (!match) continue;
+    let value = match[2];
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+    out[match[1]] = value;
+  }
+  return out;
+};
+
+let repoEnvLoaded = false;
+export const ensureRepoEnvLoaded = () => {
+  if (repoEnvLoaded) return;
+  repoEnvLoaded = true;
+  const root = findRepoRoot();
+  if (!root) return;
+  // Order: .env (lowest), .env.local (overrides). Existing process.env values win.
+  for (const name of ['.env', '.env.local']) {
+    const vals = parseEnvFile(path.join(root, name));
+    for (const [k, v] of Object.entries(vals)) {
+      if (process.env[k] == null || process.env[k] === '') process.env[k] = v;
+    }
+  }
+};
+
+const CONVEX_BASE = () => {
+  ensureRepoEnvLoaded();
+  return (
+    process.env.CONVEX_HTTP_ACTIONS_URL
+    || process.env.VITE_CONVEX_SITE_URL
+    || ''
+  ).replace(/\/+$/, '');
+};
 
 export const karenAuthPath = () => AUTH_PATH;
 
