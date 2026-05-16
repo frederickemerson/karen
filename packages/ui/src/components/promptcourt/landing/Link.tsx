@@ -85,9 +85,11 @@ const SignedOutPanel: React.FC<{ code: string | null }> = ({ code }) => {
       </div>
 
       <div className="rounded-md border border-[#111] bg-white p-4 shadow-[8px_8px_0_#111]">
+        {/* routing="virtual": embed the SignUp widget inline; the URL is /link, not /signup,
+            so path-mode would render nothing. virtual mode lets Clerk handle its own routing
+            internally without touching window.location. */}
         <SignUp
-          routing="path"
-          path="/signup"
+          routing="virtual"
           forceRedirectUrl={redirectUrl}
           signInForceRedirectUrl={redirectUrl}
         />
