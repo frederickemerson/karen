@@ -3,6 +3,7 @@ import { RiCheckLine, RiFileCopyLine, RiSkullLine } from '@remixicon/react';
 import { copyTextToClipboard } from '@/lib/clipboard';
 import type { PromptCourtPublicPost } from '@/lib/promptcourt';
 import { cn } from '@/lib/utils';
+import { pickBlockedPostLine, pickQuizFailedLine } from '@/lib/karenLines';
 import {
   formatBadPromptShareText,
   karenChargeList,
@@ -12,16 +13,20 @@ import {
 import { moodForScore } from '@/lib/karenWebVoice';
 import { SpeakerButton } from './SpeakerButton';
 
-// Build the line Karen reads for a buried-prompt card. Mirrors the TUI's
-// 'prompt-blocked' / 'quiz-wrong' cues. Short — 240ish chars — so ElevenLabs
-// stays cheap and the cache key is stable per post id.
+// Karen line for a buried-prompt card. Picks from a rotating pool so two
+// blocks in a row do not sound identical. Falls back to a charges-only line
+// only if the pool comes back empty (it should not).
 const karenPostLine = (post: PromptCourtPublicPost): string => {
   const score = Number.isFinite(post.score) ? Number(post.score) : 0;
-  const reasons = (post.failureReasons || []).slice(0, 2).map((r) => r.replace(/\.$/, '')).join('. ');
-  const opener = post.type === 'quiz_failed'
+  const firstReason = (post.failureReasons || [])[0]?.replace(/\.$/, '');
+  const ctx = { name: post.username || 'you', score, firstReason };
+  const line = post.type === 'quiz_failed'
+    ? pickQuizFailedLine(ctx)
+    : pickBlockedPostLine(ctx);
+  if (line) return line;
+  return post.type === 'quiz_failed'
     ? `Quiz failed. ${score} out of one hundred.`
     : `Karen blocked at ${score} out of one hundred.`;
-  return reasons ? `${opener} ${reasons}.` : opener;
 };
 
 type BadPromptGraveyardProps = {

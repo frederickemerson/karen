@@ -12,21 +12,15 @@ import { KarenBadgeWall } from '../KarenBadgeWall';
 import { BadPromptGraveyard } from '../BadPromptGraveyard';
 import { SpeakerButton } from '../SpeakerButton';
 import { moodForScore } from '../../../lib/karenWebVoice';
+import { pickProfileLine } from '../../../lib/karenLines';
 
-// Build a Karen-voice line for a profile read. Lines mirror the TUI's
-// `profile-read` cue pool but parameterised by the visited user. We hash the
-// score by 5-point buckets so similar scores share a cache entry.
+// Picks from a rotating profile-read pool so repeated visits do not sound
+// identical. Falls back to a static line only if the pool is empty.
 const karenProfileLine = (username: string, stats: PromptCourtProfile['stats']): string => {
   const score = Math.round(Number(stats.disciplineScore) || 0);
   const streak = Number(stats.currentStreak) || 0;
-  if (score >= 80) return `${username}. ${score} out of one hundred. Karen is reluctantly proud.`;
-  if (score >= 50) {
-    if (streak >= 7) return `${username}. ${score} out of one hundred, ${streak} day streak. Acceptable.`;
-    return `${username}. ${score} out of one hundred. Acceptable, for now.`;
-  }
-  if (Number(stats.publicFailureCount) > 0) {
-    return `${username}. ${score} out of one hundred. Karen has notes. Lots of them.`;
-  }
+  const line = pickProfileLine({ name: username, score, streak });
+  if (line) return line;
   return `${username}. ${score} out of one hundred. Karen has notes.`;
 };
 
