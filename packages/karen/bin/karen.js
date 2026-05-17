@@ -662,12 +662,22 @@ const printVerdict = (prompt, evaluation) => {
     line('');
     line(post ? color(`Public record: ${post.id}`, 'red') : color('Public posting disabled by Karen privacy policy.', 'amber'));
     if (post?.id) printShameStamp({ username: username(), postId: post.id });
+    setWaitingForRetry(true);
+  } else {
+    setWaitingForRetry(false);
   }
 };
 
 const shouldRunAgentForEvaluation = (evaluation) => (
   evaluation?.allowed === true
 );
+
+// After a block, the next prompt should clearly say "Karen is waiting for a
+// retry" so the user knows the previous prompt didn't go through. Cleared on
+// the next allowed prompt or on /quit.
+let promptWaitingForRetry = false;
+const setWaitingForRetry = (value) => { promptWaitingForRetry = Boolean(value); };
+const isWaitingForRetry = () => promptWaitingForRetry;
 
 const maybeScreamAtLongPrompt = (prompt) => {
   if (prompt.length < KAREN_LONG_PROMPT_THRESHOLD) return;
@@ -1184,6 +1194,20 @@ const runQuiz = async ({ prompt, generatedDiff, cwd = null, outerRl = null }) =>
       }
       if (selected !== question.answer) {
         line('');
+        // Big red "GIT RESET --HARD" splash per the launch video. We don't
+        // literally git-reset the user's real repo — the agent ran inside an
+        // isolated worktree and the discard happens in cleanupWorktree.
+        // What the user sees is the theatrical equivalent.
+        const stamp = ansi.bgRed + ansi.bold;
+        line(`${stamp}                                       ${ansi.reset}`);
+        line(`${stamp}        REDO UR WORK.                  ${ansi.reset}`);
+        line(`${stamp}                                       ${ansi.reset}`);
+        line(`${stamp}        GIT RESET --HARD               ${ansi.reset}`);
+        line(`${stamp}                                       ${ansi.reset}`);
+        line(`${stamp}  Sandbox deleted. Real repo stays     ${ansi.reset}`);
+        line(`${stamp}  clean.                               ${ansi.reset}`);
+        line(`${stamp}                                       ${ansi.reset}`);
+        line('');
         line(color('THROWN OUT', 'red'));
         playAudioCue('quiz-wrong');
         return false;
@@ -1581,10 +1605,17 @@ const main = async () => {
 
   let active = true;
   while (active) {
-    const prompt = await rl.question(color('\nkaren > ', 'pink'));
+    // Stateful prompt: after a BLOCK, the prompt itself tells the user Karen
+    // is waiting for a retry. Cleared on the next allowed prompt OR when the
+    // user types /<command> (commands aren't subject to the prompt gate).
+    const promptLine = isWaitingForRetry()
+      ? `\n${color('karen', 'amber')} ${color('> waiting for a safer prompt >', 'amber')} `
+      : color('\nkaren > ', 'pink');
+    const prompt = await rl.question(promptLine);
     const trimmed = prompt.trim();
     if (!trimmed) continue;
     if (trimmed.startsWith('/')) {
+      setWaitingForRetry(false);
       active = await handleCommand(trimmed, rl);
       continue;
     }
