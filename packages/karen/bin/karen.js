@@ -1635,11 +1635,7 @@ const main = async () => {
     // Only used from the interactive shell. The one-shot `karen "<prompt>"`
     // path skips this — see initialPrompt handling below — because there is no
     // sensible way to re-run with a different prompt in non-interactive mode.
-    if (!rewriteAiAllowed()) {
-      // No API key → fall back to the static suggestedRewrite already printed
-      // by printVerdict. Nothing more to do.
-      return null;
-    }
+    const aiAllowed = rewriteAiAllowed();
     line('');
     const answer = (await rl.question(color('Use Karen\'s rewrite? [Y/n/e] (e = edit) ', 'green'))).trim().toLowerCase();
     if (answer === 'n' || answer === 'no') {
@@ -1653,6 +1649,14 @@ const main = async () => {
         line(color('Empty rewrite. Karen waits.', 'gray'));
         return null;
       }
+    } else if (!aiAllowed) {
+      // No API key → Y just accepts the static suggestedRewrite already shown.
+      rewriteText = (evaluation.suggestedRewrite || '').trim();
+      if (!rewriteText) {
+        line(color('No rewrite available without an OpenAI key. Karen waits.', 'gray'));
+        return null;
+      }
+      line(color('Using Karen\'s static rewrite (set OPENAI_API_KEY for AI rewrites).', 'gray'));
     } else {
       // Default Y / Enter → ask the model.
       line(color('Karen is rewriting...', 'gray'));
