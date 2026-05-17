@@ -52,6 +52,26 @@ import {
 } from '../lib/karen-fx.js';
 // drumrollReveal, paintBigText, printIdleHeckle, printStreakTombstone live in karen-fx.js
 // but are not yet wired into the runQuiz / idle / streak-break code paths. Re-import when wiring.
+import {
+  karenRewritePrompt,
+  rewriteAiAllowed,
+  gatherRepoContext,
+} from '../lib/karen-rewrite.js';
+import {
+  isTimingEnabled,
+  timeSync,
+  timeAsync,
+  getCachedProfile,
+  invalidateProfileCache,
+} from '../lib/karen-timing.js';
+import {
+  renderGuardBadge,
+  renderBlockedSidebar,
+  createScreenTailBuffer,
+  updateScreenTail,
+  screenTailRaw,
+  screenTailVisible,
+} from '../lib/karen-tui-guard.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '../../..');
@@ -169,7 +189,7 @@ const terminalAudioCap = () => {
 // voice_settings (angry / standard / deadpan tiers).
 const buildVoiceContext = (extras = {}) => {
   let profile = null;
-  try { profile = store.getProfile(username()); } catch {}
+  try { profile = getCachedProfile(store, username()); } catch {}
   const stats = profile?.stats || {};
   return {
     name: profile?.user?.username || username(),
@@ -499,9 +519,16 @@ const copyFileInto = (sourceRoot, targetRoot, relativePath) => {
   });
 };
 
-const prepareGeneratedDiff = (cwd) => {
+const prepareGeneratedDiff = (cwd) => timeSync('prepareGeneratedDiff', () => {
   run('git', ['add', '-N', '.'], { cwd });
   return getGitDiff(cwd);
+}, (diff) => `bytes=${(diff || '').length}`);
+
+// Cheap probe — used by createIsolatedWorktree to decide whether to mirror.
+const repoIsClean = (cwd) => {
+  const result = run('git', ['status', '--porcelain'], { cwd });
+  if (result.status !== 0) return false;
+  return (result.stdout || '').trim().length === 0;
 };
 
 const normalizeOpenCodeModel = (value, provider = null) => {
@@ -589,7 +616,7 @@ const KAREN_BUILTIN_COMMANDS = new Set([
 const drawShell = () => {
   const repo = getRepo();
   const oc = readOpenCodeState();
-  const profile = store.getProfile(username());
+  const profile = getCachedProfile(store, username());
   const stats = profile.stats || {};
   if (process.stdout.isTTY) process.stdout.write('\x1b[2J\x1b[H');
   line(color('KAREN', 'pink') + color('  terminal judgment layer for OpenCode', 'gray'));
@@ -835,10 +862,19 @@ const proxyOpencodeTuiIntercept = (args = []) => new Promise((resolve) => {
   });
 
   let inputBuffer = '';
-  let screenTail = '';
+  // Robust screen-tail ring buffer (see karen-tui-guard.js). Keeps both the
+  // raw last-N-bytes (compatible with the existing classifyTuiContext regex)
+  // and the last N visible lines so prompt-context detection survives model-
+  // picker churn that fills the raw tail with ANSI escapes.
+  const tail = createScreenTailBuffer({ maxBytes: 3000, maxLines: 24 });
   const wasRaw = process.stdin.isRaw;
   process.stdin.setRawMode(true);
   process.stdin.resume();
+
+  // Paint the "karen guard" badge in the top-left, and repaint periodically so
+  // it survives opencode's own redraws. Cheap (one escape sequence per second).
+  const badgeTimer = setInterval(() => renderGuardBadge({ active: true }), 1000);
+  renderGuardBadge({ active: true });
 
   const onResize = () => {
     child.resize(process.stdout.columns || 120, process.stdout.rows || 40);
@@ -861,10 +897,15 @@ const proxyOpencodeTuiIntercept = (args = []) => new Promise((resolve) => {
         const prompt = inputBuffer.trim();
         inputBuffer = '';
         maybeScreamAtLongPrompt(prompt);
-        if (shouldJudgeTuiBuffer(prompt, { screenTail })) {
+        const rawTail = screenTailRaw(tail);
+        if (shouldJudgeTuiBuffer(prompt, { screenTail: rawTail })) {
           const evaluation = evaluatePrompt(prompt);
           if (!evaluation.allowed) {
             child.write('\x15');
+            // Paint sidebar overlay (visual flash) AND the durable scrollback
+            // record. The overlay will be repainted-over by opencode, but the
+            // scrollback record stays as the permanent verdict.
+            renderBlockedSidebar(evaluation);
             printTuiBlock(prompt, evaluation);
             continue;
           }
@@ -879,13 +920,14 @@ const proxyOpencodeTuiIntercept = (args = []) => new Promise((resolve) => {
   };
 
   child.onData((data) => {
-    screenTail = `${screenTail}${stripAnsi(data)}`.slice(-3000);
+    updateScreenTail(tail, data.toString ? data.toString('utf8') : String(data));
     process.stdout.write(data);
   });
   process.stdin.on('data', onInput);
   process.stdout.on('resize', onResize);
 
   child.onExit(({ exitCode }) => {
+    clearInterval(badgeTimer);
     process.stdin.off('data', onInput);
     process.stdout.off('resize', onResize);
     if (process.stdin.isTTY) process.stdin.setRawMode(wasRaw);
@@ -915,14 +957,14 @@ const cleanupAllWorktreesNow = () => {
   activeWorktrees.clear();
 };
 
-const createIsolatedWorktree = () => {
+const createIsolatedWorktree = () => timeSync('createIsolatedWorktree', () => {
   const repo = getRepo();
   if (!repo.isGit) {
     return { ok: false, error: 'Karen needs a git repository for isolated execution.' };
   }
 
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'karen-worktree-'));
-  const addResult = run('git', ['worktree', 'add', '--quiet', '--detach', tempRoot, 'HEAD'], { cwd: repo.root });
+  const addResult = timeSync('git worktree add', () => run('git', ['worktree', 'add', '--quiet', '--detach', tempRoot, 'HEAD'], { cwd: repo.root }));
   if (addResult.status !== 0) {
     fs.rmSync(tempRoot, { recursive: true, force: true });
     return { ok: false, error: addResult.stderr?.trim() || 'Failed to create isolated worktree.' };
@@ -946,17 +988,26 @@ const createIsolatedWorktree = () => {
     return { ok: false, error: `Failed to install Karen commit hooks: ${error?.message || error}` };
   }
 
-  const baselinePatch = getGitDiff(repo.root);
-  if (baselinePatch.trim()) {
-    const applied = applyPatch(baselinePatch, [], tempRoot);
-    if (applied.status !== 0) {
-      cleanupWorktree(repo.root, tempRoot, runtimeDir);
-      return { ok: false, error: applied.stderr?.trim() || 'Failed to mirror current tracked changes into isolated worktree.' };
+  // Optimization: when the real worktree is clean, `git worktree add HEAD`
+  // already produces an identical tree. Skip the diff mirror + untracked copy
+  // (which can be the slowest part of setup on large repos).
+  const skipMirror = repoIsClean(repo.root);
+  if (!skipMirror) {
+    const baselinePatch = timeSync('mirror baseline diff', () => getGitDiff(repo.root));
+    if (baselinePatch.trim()) {
+      const applied = timeSync('mirror apply patch', () => applyPatch(baselinePatch, [], tempRoot));
+      if (applied.status !== 0) {
+        cleanupWorktree(repo.root, tempRoot, runtimeDir);
+        return { ok: false, error: applied.stderr?.trim() || 'Failed to mirror current tracked changes into isolated worktree.' };
+      }
     }
-  }
-
-  for (const untracked of getUntrackedFiles(repo.root)) {
-    copyFileInto(repo.root, tempRoot, untracked);
+    timeSync('mirror untracked copy', () => {
+      for (const untracked of getUntrackedFiles(repo.root)) {
+        copyFileInto(repo.root, tempRoot, untracked);
+      }
+    });
+  } else if (isTimingEnabled()) {
+    line(color('[karen-timing] mirror skipped (repo clean)', 'gray'));
   }
 
   run('git', ['add', '-A'], { cwd: tempRoot });
@@ -988,7 +1039,7 @@ const createIsolatedWorktree = () => {
     runtimeDir,
     commitToken,
   };
-};
+}, (result) => (result?.ok ? 'ok' : `failed: ${result?.error?.slice(0, 60) || 'unknown'}`));
 
 const buildRunArgs = (prompt) => {
   const oc = readOpenCodeState();
@@ -1142,20 +1193,25 @@ const runQuiz = async ({ prompt, generatedDiff, cwd = null, outerRl = null }) =>
   const ownsRl = !outerRl;
   const rl = outerRl || readline.createInterface({ input: process.stdin, output: process.stdout });
 
-  const quiz = await buildQuiz({
+  // Fire the quiz builder in parallel with the intro splash so the
+  // OpenAI roundtrip overlaps with rendering/audio cues that the user has to
+  // watch anyway. On a fresh model call this saves the entire splash duration
+  // (~150-300ms) of wall-clock. On a parser fallback the await is a no-op.
+  const quizPromise = timeAsync('buildQuiz', () => buildQuiz({
     prompt,
     generatedDiff,
     cwd,
     onAiFallback: (message) => {
       line(color(`Karen AI quiz fell back to parser questions: ${message}`, 'amber'));
     },
-  });
-  const questions = quiz.questions;
+  }), (q) => `source=${q?.source || 'unknown'}`);
   const stopMusic = startQuizMusic();
   playAudioCue('quiz-start');
   line('');
   line(color('CODE READ CHECK', 'pink'));
   line(color('Kahoot mode. Answer from the diff Karen is about to promote. Audio uses terminal bells by default.', 'gray'));
+  const quiz = await quizPromise;
+  const questions = quiz.questions;
   line(color(`Quiz source: ${quiz.source}`, 'gray'));
 
   try {
@@ -1365,7 +1421,11 @@ const printFeed = (count = 8) => {
 };
 
 const printProfile = () => {
-  const profile = store.getProfile(username());
+  // /profile is a manual user action — get fresh data so we don't show a
+  // stale score after a recent verdict. Invalidate then re-fetch through the
+  // cache so subsequent calls within the TTL window still hit.
+  invalidateProfileCache(username());
+  const profile = getCachedProfile(store, username());
   line(color(`@${profile.user.username}`, 'pink'));
   line(`Discipline: ${profile.stats.disciplineScore}/100 ${profile.stats.level}`);
   line(`Prompt avg: ${profile.stats.averagePromptScore}/100  Public failures: ${profile.stats.publicFailureCount}`);
@@ -1515,6 +1575,32 @@ const handleCommand = async (raw, rl) => {
   return true;
 };
 
+// Open the user's $EDITOR / $VISUAL (default: vi) with the given starting
+// text. Returns the saved contents (trimmed of trailing newline). Used by the
+// /rewrite-edit path in offerKarenRewrite. Always re-opens stdio raw mode
+// after the editor exits so the readline prompt keeps working.
+const editInExternalEditor = (startingText = '') => new Promise((resolve) => {
+  const editor = process.env.VISUAL || process.env.EDITOR || (process.platform === 'win32' ? 'notepad' : 'vi');
+  const tempFile = path.join(os.tmpdir(), `karen-rewrite-${process.pid}-${Date.now()}.txt`);
+  try {
+    fs.writeFileSync(tempFile, String(startingText || ''));
+  } catch {
+    resolve('');
+    return;
+  }
+  const child = spawn(editor, [tempFile], { stdio: 'inherit' });
+  child.on('exit', () => {
+    let saved = '';
+    try { saved = fs.readFileSync(tempFile, 'utf8'); } catch {}
+    try { fs.unlinkSync(tempFile); } catch {}
+    resolve(saved.replace(/\s+$/, ''));
+  });
+  child.on('error', () => {
+    try { fs.unlinkSync(tempFile); } catch {}
+    resolve('');
+  });
+});
+
 const main = async () => {
   const args = process.argv.slice(2);
   if (args.includes('--help') || args.includes('-h')) {
@@ -1545,24 +1631,105 @@ const main = async () => {
     await runSetupWizard(rl);
   }
 
-  const handlePrompt = async (prompt) => {
+  const offerKarenRewrite = async (originalPrompt, evaluation) => {
+    // Only used from the interactive shell. The one-shot `karen "<prompt>"`
+    // path skips this — see initialPrompt handling below — because there is no
+    // sensible way to re-run with a different prompt in non-interactive mode.
+    if (!rewriteAiAllowed()) {
+      // No API key → fall back to the static suggestedRewrite already printed
+      // by printVerdict. Nothing more to do.
+      return null;
+    }
+    line('');
+    const answer = (await rl.question(color('Use Karen\'s rewrite? [Y/n/e] (e = edit) ', 'green'))).trim().toLowerCase();
+    if (answer === 'n' || answer === 'no') {
+      line(color('Karen waits.', 'gray'));
+      return null;
+    }
+    let rewriteText = '';
+    if (answer === 'e' || answer === 'edit') {
+      rewriteText = await editInExternalEditor(evaluation.suggestedRewrite || originalPrompt);
+      if (!rewriteText.trim()) {
+        line(color('Empty rewrite. Karen waits.', 'gray'));
+        return null;
+      }
+    } else {
+      // Default Y / Enter → ask the model.
+      line(color('Karen is rewriting...', 'gray'));
+      const context = gatherRepoContext({ cwd: process.cwd() });
+      const result = await timeAsync('karenRewritePrompt', () => karenRewritePrompt({
+        original: originalPrompt,
+        evaluation,
+        cwd: context.cwd,
+        branch: context.branch,
+        files: context.files,
+        recentCommits: context.recentCommits,
+      }), (r) => `source=${r?.source || '?'} ok=${r?.ok}`);
+      if (!result?.ok || !result.rewrite) {
+        line(color(`Karen could not rewrite the prompt (${result?.source || 'error'}). Using the static suggestion.`, 'amber'));
+        if (result?.reason) line(color(result.reason, 'gray'));
+        rewriteText = evaluation.suggestedRewrite || '';
+        if (!rewriteText.trim()) return null;
+      } else {
+        rewriteText = result.rewrite;
+      }
+    }
+    line('');
+    line(color('Karen rewrite:', 'pink'));
+    for (const rewriteLine of rewriteText.split(/\r?\n/)) {
+      line(`  ${rewriteLine}`);
+    }
+    line('');
+    const send = (await rl.question(color('Send this to OpenCode? [Y/n] ', 'green'))).trim().toLowerCase();
+    if (send === 'n' || send === 'no') {
+      line(color('Karen waits.', 'gray'));
+      return null;
+    }
+    // Sanity check: re-evaluate the rewrite. If the rewriter produced
+    // something that STILL fails, we don't loop — we just print the new
+    // verdict and stop, so the user sees what happened.
+    const reEval = evaluatePrompt(rewriteText);
+    if (!reEval.allowed) {
+      line(color(`Rewrite still failed Karen's check (${reEval.score}/100). Karen waits.`, 'amber'));
+      for (const reason of reEval.reasons.slice(0, 3)) line(`  ${color('•', 'red')} ${reason}`);
+      return null;
+    }
+    line(color(`Rewrite passes (${reEval.score}/100). Running OpenCode.`, 'green'));
+    setWaitingForRetry(false);
+    return { prompt: rewriteText, evaluation: reEval };
+  };
+
+  const handlePrompt = async (prompt, { interactive = true } = {}) => {
     try {
       maybeScreamAtLongPrompt(prompt);
-      const evaluation = evaluatePrompt(prompt);
+      let evaluation = evaluatePrompt(prompt);
       printVerdict(prompt, evaluation);
+      let effectivePrompt = prompt;
+      if (!evaluation.allowed && interactive) {
+        const accepted = await offerKarenRewrite(prompt, evaluation);
+        if (accepted) {
+          effectivePrompt = accepted.prompt;
+          evaluation = accepted.evaluation;
+        }
+      }
       if (shouldRunAgentForEvaluation(evaluation)) {
-        const beforeProfile = store.getProfile(username());
+        const prompt = effectivePrompt; // shadow for the rest of the block
+        const beforeProfile = getCachedProfile(store, username());
         const session = store.recordApprovedPrompt({
           username: username(),
           prompt: redactPublicText(prompt, 1200),
           evaluation,
           sessionId: `karen_${Date.now()}`,
         });
+        // recordApprovedPrompt mutates the store; drop the cache so post-run
+        // state reads see the new stats.
+        invalidateProfileCache(username());
         await runAgent(prompt, session, rl);
+        invalidateProfileCache(username());
         // After-run state transitions: fire streak-break and level-up voice cues
         // when the relevant stats actually changed across this prompt.
         try {
-          const afterProfile = store.getProfile(username());
+          const afterProfile = getCachedProfile(store, username());
           const beforeStreak = Number(beforeProfile?.stats?.currentStreak) || 0;
           const afterStreak = Number(afterProfile?.stats?.currentStreak) || 0;
           if (beforeStreak >= 3 && afterStreak === 0) {
@@ -1589,7 +1756,8 @@ const main = async () => {
   };
 
   if (initialPrompt) {
-    await handlePrompt(initialPrompt);
+    // One-shot `karen "<prompt>"` mode — no interactive rewrite flow.
+    await handlePrompt(initialPrompt, { interactive: false });
     rl.close();
     await sleep(50);
     return;
