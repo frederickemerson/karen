@@ -484,7 +484,9 @@ http.route({
       deadpan:  { stability: 0.70, similarity_boost: 0.78, style: 0.35, use_speaker_boost: true, speed: 0.85 },
     }[mood as 'angry' | 'standard' | 'deadpan'];
 
-    const modelId = process.env.ELEVENLABS_MODEL_ID || 'eleven_flash_v2_5';
+    // multilingual_v2 = warmer, more natural delivery. flash is faster but
+     // sounds robotic. Match the TUI default in packages/karen/lib/karen-voice.js.
+    const modelId = process.env.ELEVENLABS_MODEL_ID || 'eleven_multilingual_v2';
     // Cache hash includes the full voice_settings so any future tuning auto-busts
     // the cache. Old MP3s linger in Convex file storage but stop being served.
     const contentHash = await sha256Hex(JSON.stringify({ rawText, voiceId, mood, modelId, voiceSettings }));
