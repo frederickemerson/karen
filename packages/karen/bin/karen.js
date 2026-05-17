@@ -311,6 +311,15 @@ const isPortOpen = (port, host = '127.0.0.1') => new Promise((resolve) => {
   socket.once('error', () => resolve(false));
 });
 
+// Best-effort browser launcher — same shape karen-auth.js uses for /login.
+const tryOpenBrowser = (url) => {
+  let cmd; let args;
+  if (process.platform === 'darwin') { cmd = 'open'; args = [url]; }
+  else if (process.platform === 'win32') { cmd = 'cmd'; args = ['/c', 'start', '""', url]; }
+  else { cmd = 'xdg-open'; args = [url]; }
+  return spawnSilent(cmd, args);
+};
+
 const openKarenGui = async () => {
   const port = Number(process.env.OPENCHAMBER_PORT || 3002);
   // Root path loads MainLayout (chat + git editor). `/karen` is PromptCourt-only (scoreboard) — see packages/ui/src/App.tsx.
@@ -318,15 +327,20 @@ const openKarenGui = async () => {
   const url = `http://127.0.0.1:${port}${guiPath.startsWith('/') ? guiPath : `/${guiPath}`}`;
   const scoreboardUrl = `http://127.0.0.1:${port}/karen`;
   const projectDirectory = ensureGuiProjectDirectory(process.cwd());
+
+  // Already running → just open the tab.
   if (await isPortOpen(port)) {
-    line(color(`OpenChamber GUI is already running: ${url}`, 'green'));
+    line(color(`OpenChamber GUI already up. Opening ${url}`, 'green'));
     line(color(`PromptCourt scoreboard: ${scoreboardUrl}`, 'gray'));
     if (projectDirectory) {
       line(color(`Project folder set to ${projectDirectory}. Refresh the GUI if it was already open.`, 'gray'));
     }
+    tryOpenBrowser(url);
     return;
   }
 
+  // Not running → spawn the dev server, then auto-open the browser once the
+  // port responds. Don't make the user copy/paste a URL out of the TUI.
   line(color(`Starting OpenChamber GUI at ${url}`, 'cyan'));
   line(color(`PromptCourt scoreboard: ${scoreboardUrl}`, 'gray'));
   if (projectDirectory) {
@@ -342,7 +356,25 @@ const openKarenGui = async () => {
     },
   });
   child.unref();
-  line(color('Give it a few seconds, then open the URL above.', 'gray'));
+
+  // Poll the port for up to ~30s, then open the browser. The express /health
+  // endpoint comes up fast; the vite build can take 30s on first run so the
+  // page will briefly show the 503 "dist not found" message before vite is
+  // ready. Acceptable tradeoff vs. asking the user to wait + click.
+  line(color('Karen is waiting for the GUI to wake up.', 'gray'));
+  (async () => {
+    for (let i = 0; i < 30; i += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      if (await isPortOpen(port)) {
+        line(color(`Opening ${url} in your browser.`, 'green'));
+        tryOpenBrowser(url);
+        return;
+      }
+      // eslint-disable-next-line no-await-in-loop
+      await sleep(1000);
+    }
+    line(color('Server is taking longer than 30s. Open the URL above manually.', 'amber'));
+  })();
 };
 
 const isExecutableFile = (candidate) => {
