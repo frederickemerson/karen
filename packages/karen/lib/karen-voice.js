@@ -28,7 +28,10 @@ import { spawn } from 'node:child_process';
 // --- Constants ---------------------------------------------------------------
 
 const DEFAULT_VOICE_ID = 'z9fAnlkpzviPz146aGWa'; // Glinda — older, warm-ironic.
-const DEFAULT_MODEL_ID = 'eleven_flash_v2_5';
+// multilingual_v2: significantly more natural prosody than the flash tier. 2x
+// credit cost per character, but content-hash caching means total cost stays
+// low. Latency ~2-3s per fresh line (cached lines instant).
+const DEFAULT_MODEL_ID = 'eleven_multilingual_v2';
 
 // Voice settings tuned by Karen's mood at the user, derived from score band.
 // v2 (2026-05): dropped stability (more inflection, less monotone) and raised
