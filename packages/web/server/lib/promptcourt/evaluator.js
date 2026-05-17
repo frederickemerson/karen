@@ -131,6 +131,203 @@ const MUTATION_VERBS = /\b(?:fix|debug|patch|repair|resolve|implement|introduce|
 // Bare lazy directives that carry no information at all.
 const LAZY_DIRECTIVES = /\b(?:get\s+(?:it|this|things?|stuff)\s+working|make\s+(?:it|this|things?|stuff)\s+work|just\s+do\s+it|do\s+your\s+(?:thing|magic)|make\s+it\s+(?:better|nicer|cleaner|prettier))\b/i;
 
+// --- Commit-intent classification -------------------------------------------
+//
+// `classifyPromptIntent` is the public, commit-aware sibling of `classifyIntent`.
+// It returns either 'commit' or 'normal'. It is NOT used by the conversational/
+// exploration fast-path; that path stays owned by `classifyIntent`.
+
+// Negative phrases that *look* like commit/push/PR/merge but are not git
+// operations. These are stripped before re-testing the positive patterns.
+const COMMIT_NEGATIVE_PATTERNS = [
+  /\bcommit (it|this|that|them|these|those)? ?to memory\b/i,
+  /\bcommitted to memory\b/i,
+  /\bcommit (to|on) (the|a|our)? ?(plan|idea|strategy|cause|vision|principle|process)\b/i,
+  /\bpush notifications?\b/i,
+  /\bpush back\b/i,
+  /\bpush through\b/i,
+  /\bdescribe (the|a|our)? ?commit history\b/i,
+  /\bcommit history\b/i,
+  /\bmerge (sort|conflict)\b/i,
+  /\bopen a (new )?(file|tab|window|terminal|browser|issue|ticket)\b/i,
+];
+
+const COMMIT_POSITIVE_PATTERNS = [
+  /\bgit\s+commit\b/i,
+  /\bgit\s+push\b/i,
+  /\bcommit\s+(and|then)\s+push\b/i,
+  /\bcommit\s+(everything|all|the\s+changes|these\s+changes|this|it|them|files?)\b/i,
+  /\bcommit\s+(and|&)\s+push\s+(it|this|that|them)\b/i,
+  /\bcommit\s+(it|this|that|them)\s+(and|then|&)\s+push\b/i,
+  /\bpush\s+(to|it\s+to)\s+(main|master|origin|remote|upstream|production|prod)\b/i,
+  /\bpush\s+(the\s+)?(branch|changes?|commits?)\b/i,
+  /\bopen\s+a\s+(pr|pull\s+request)\b/i,
+  /\bcreate\s+a\s+(pr|pull\s+request)\b/i,
+  /\braise\s+a\s+(pr|pull\s+request)\b/i,
+  /\bmerge\s+(to|into|in\s+to)\s+(main|master|trunk|develop|release)\b/i,
+  /\bmerge\s+(the\s+)?(pr|pull\s+request|branch)\b/i,
+  /\bship\s+(it|this|the\s+change|the\s+pr)\b/i,
+];
+
+export const classifyPromptIntent = (rawPrompt) => {
+  const prompt = typeof rawPrompt === 'string' ? rawPrompt.trim() : '';
+  if (!prompt) return 'normal';
+
+  const hasNegative = COMMIT_NEGATIVE_PATTERNS.some((re) => re.test(prompt));
+  const hasPositive = COMMIT_POSITIVE_PATTERNS.some((re) => re.test(prompt));
+
+  if (hasPositive && !hasNegative) return 'commit';
+  if (!hasPositive) return 'normal';
+
+  // Both fire — strip negative substrings, then re-test positives.
+  let stripped = prompt;
+  for (const re of COMMIT_NEGATIVE_PATTERNS) {
+    stripped = stripped.replace(new RegExp(re.source, re.flags.includes('g') ? re.flags : re.flags + 'g'), ' ');
+  }
+  const stillPositive = COMMIT_POSITIVE_PATTERNS.some((re) => re.test(stripped));
+  return stillPositive ? 'commit' : 'normal';
+};
+
+// --- Commit-specific checks --------------------------------------------------
+// Each returns true when the check FAILS (i.e., the prompt is missing what
+// we'd expect a real commit prompt to carry).
+
+const FILE_PATH_PATTERN = /[\w./@-]+\.(ts|tsx|js|jsx|mjs|cjs|css|scss|json|md|yml|yaml|toml|py|go|rs|java|kt|swift|rb|php|sh|sql)\b/i;
+const DIRECTORY_PATH_PATTERN = /(?:^|\s)(?:packages|src|app|components|server|client|lib|pages|routes|convex|scripts|docs|tests?|specs?)\//i;
+const DIFF_EXPLANATION_HINT_PATTERN = /\b(the\s+diff|changes?\s+(to|in|are|include)|i\s+(changed|updated|added|removed|refactored|fixed|renamed)|this\s+(diff|patch|change|commit)|the\s+patch|the\s+commit\s+adds|the\s+commit\s+removes|the\s+commit\s+changes|adds?\s+(a|the|new)|removes?\s+(a|the))\b/i;
+const BULLET_LIST_PATTERN = /(^|\n)\s*(?:[-*•]\s+|\d+[.)]\s+).+/m;
+
+export const diffExplanationMissing = (rawPrompt) => {
+  const prompt = typeof rawPrompt === 'string' ? rawPrompt : '';
+  if (!prompt) return true;
+  if (FILE_PATH_PATTERN.test(prompt)) return false;
+  if (DIRECTORY_PATH_PATTERN.test(prompt)) return false;
+  if (DIFF_EXPLANATION_HINT_PATTERN.test(prompt)) return false;
+  if (BULLET_LIST_PATTERN.test(prompt)) return false;
+  return true;
+};
+
+const TESTS_NAMED_PATTERNS = [
+  /\bwith\s+tests?\b/i,
+  /\bran\s+tests?\s+for\b/i,
+  /\branning\s+tests?\b/i,
+  /\btests?\s+pass(ing|ed)?\b/i,
+  /\btests?\s+(are\s+)?green\b/i,
+  /\b\S+\.test\.(ts|tsx|js|jsx|mjs|cjs)\b/i,
+  /\b\S+\.spec\.(ts|tsx|js|jsx|mjs|cjs)\b/i,
+  /\b(added|wrote|updated)\s+(unit\s+|integration\s+)?tests?\b/i,
+  /\bnew\s+tests?\s+(in|for|cover|covering)\b/i,
+  /\bvitest|jest|playwright|cypress\b/i,
+];
+
+export const testsNotNamed = (rawPrompt) => {
+  const prompt = typeof rawPrompt === 'string' ? rawPrompt : '';
+  if (!prompt) return true;
+  return !TESTS_NAMED_PATTERNS.some((re) => re.test(prompt));
+};
+
+const BLAST_RADIUS_PATTERNS = [
+  /\bno\s+breaking\s+changes?\b/i,
+  /\bonly\s+touches?\b/i,
+  /\bonly\s+(changes?|modifies|edits?|affects?)\b/i,
+  /\bscoped\s+to\b/i,
+  /\bbackward(s)?\s+compatible\b/i,
+  /\bno\s+(public|external)\s+api\s+changes?\b/i,
+  /\bno\s+schema\s+changes?\b/i,
+  /\bno\s+migration(s)?\b/i,
+  /\bisolated\s+to\b/i,
+  /\bcontained\s+(to|in|within)\b/i,
+  /\bblast\s+radius\b/i,
+];
+
+export const blastRadiusMissing = (rawPrompt) => {
+  const prompt = typeof rawPrompt === 'string' ? rawPrompt : '';
+  if (!prompt) return true;
+  return !BLAST_RADIUS_PATTERNS.some((re) => re.test(prompt));
+};
+
+// --- Chip schema -------------------------------------------------------------
+
+// Map of reason text -> chip id. `reasons[]` strings are mirrored into chips
+// so existing consumers keep working while UIs can render structured chips.
+const REASON_TO_CHIP = [
+  {
+    test: (r) => /no concrete target outcome/i.test(r),
+    id: 'no-target-outcome',
+    severity: 'critical',
+    category: 'general',
+  },
+  {
+    test: (r) => /no clear files|scope boundary/i.test(r),
+    id: 'no-files',
+    severity: 'critical',
+    category: 'general',
+  },
+  {
+    test: (r) => /missing acceptance criteria/i.test(r),
+    id: 'no-acceptance',
+    severity: 'critical',
+    category: 'general',
+  },
+  {
+    test: (r) => /current behavior|relevant context/i.test(r),
+    id: 'no-context',
+    severity: 'warn',
+    category: 'general',
+  },
+  {
+    test: (r) => /verification|test request/i.test(r),
+    id: 'no-verification',
+    severity: 'warn',
+    category: 'general',
+  },
+  {
+    test: (r) => /constraints/i.test(r),
+    id: 'no-constraints',
+    severity: 'warn',
+    category: 'general',
+  },
+  {
+    test: (r) => /vague language/i.test(r),
+    id: 'vague-language',
+    severity: 'critical',
+    category: 'general',
+  },
+  {
+    test: (r) => /lazy prompt/i.test(r),
+    id: 'lazy-prompt-warning',
+    severity: 'warn',
+    category: 'general',
+  },
+];
+
+const chipFromReason = (reason) => {
+  for (const entry of REASON_TO_CHIP) {
+    if (entry.test(reason)) {
+      return {
+        id: entry.id,
+        label: reason,
+        severity: entry.severity,
+        category: entry.category,
+      };
+    }
+  }
+  return null;
+};
+
+const buildChipsFromReasons = (reasons) => {
+  const chips = [];
+  const seen = new Set();
+  for (const reason of reasons) {
+    const chip = chipFromReason(reason);
+    if (chip && !seen.has(chip.id)) {
+      seen.add(chip.id);
+      chips.push(chip);
+    }
+  }
+  return chips;
+};
+
 const classifyIntent = (rawPrompt) => {
   const prompt = typeof rawPrompt === 'string' ? rawPrompt.trim() : '';
   if (!prompt) return null;
@@ -146,7 +343,9 @@ const intentApproval = (prompt, intent) => ({
   verdict: 'approved',
   allowed: true,
   intent,
+  promptIntent: 'normal',
   reasons: [],
+  chips: [],
   dimensions: {
     specificGoal: 20,
     scopeBoundaries: 20,
@@ -166,10 +365,20 @@ const countMatches = (text, patterns) => patterns.reduce((count, pattern) => (
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
+const COMMIT_CHIP_ORDER = [
+  { id: 'commit-gate-failed', label: 'Commit gate failed in the TUI.', severity: 'critical' },
+  { id: 'no-diff-explanation', label: 'No diff explanation', severity: 'critical', check: 'diff' },
+  { id: 'no-tests-named', label: 'No tests named', severity: 'critical', check: 'tests' },
+  { id: 'no-blast-radius', label: 'No blast-radius owner', severity: 'critical', check: 'blast' },
+];
+
 const scorePrompt = (rawPrompt) => {
   const prompt = typeof rawPrompt === 'string' ? rawPrompt.trim() : '';
   const intent = classifyIntent(prompt);
   if (intent) return intentApproval(prompt, intent);
+
+  const promptIntent = classifyPromptIntent(prompt);
+
   const words = prompt.split(/\s+/).filter(Boolean);
   const lines = prompt.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
 
@@ -213,19 +422,75 @@ const scorePrompt = (rawPrompt) => {
   if (dimensions.riskAwareness < 5) reasons.push('No constraints for risky or unrelated changes');
   if (vagueHits > 0) reasons.push(hasConcreteIntent ? 'Lazy prompt: allowed, but Karen will quiz harder' : 'Vague language without operational detail');
 
-  const verdict = score < 25 || (score < 40 && !hasConcreteIntent) || (hopelessHits > 0 && !hasConcreteIntent) ? 'blocked' : 'approved';
+  let verdict = score < 25 || (score < 40 && !hasConcreteIntent) || (hopelessHits > 0 && !hasConcreteIntent) ? 'blocked' : 'approved';
+
+  // Commit-specific enforcement: if classifier says this is a commit/push/PR
+  // prompt and any of the three commit-specific checks fail, force-block.
+  let chips = buildChipsFromReasons(reasons);
+  if (promptIntent === 'commit') {
+    const commitFailures = [];
+    if (diffExplanationMissing(prompt)) commitFailures.push('diff');
+    if (testsNotNamed(prompt)) commitFailures.push('tests');
+    if (blastRadiusMissing(prompt)) commitFailures.push('blast');
+
+    if (commitFailures.length > 0) {
+      verdict = 'blocked';
+      const gateChip = COMMIT_CHIP_ORDER[0];
+      const commitChips = [
+        { id: gateChip.id, label: gateChip.label, severity: gateChip.severity, category: 'commit' },
+      ];
+      for (const entry of COMMIT_CHIP_ORDER.slice(1)) {
+        if (commitFailures.includes(entry.check)) {
+          commitChips.push({
+            id: entry.id,
+            label: entry.label,
+            severity: entry.severity,
+            category: 'commit',
+          });
+        }
+      }
+      // Mirror commit chip labels into reasons[] (front of array, no dupes).
+      const mirroredReasons = commitChips.map((chip) => chip.label);
+      for (const label of mirroredReasons) {
+        if (!reasons.includes(label)) reasons.unshift(label);
+      }
+      // Re-order reasons so commit-gate-failed is first.
+      const gateLabel = gateChip.label;
+      const gateIdx = reasons.indexOf(gateLabel);
+      if (gateIdx > 0) {
+        reasons.splice(gateIdx, 1);
+        reasons.unshift(gateLabel);
+      }
+      chips = [...commitChips, ...buildChipsFromReasons(reasons.filter((r) => !mirroredReasons.includes(r)))];
+    }
+  }
+
   return {
     score,
     verdict,
     allowed: verdict === 'approved',
     intent: null,
+    promptIntent,
     reasons,
+    chips,
     dimensions,
-    suggestedRewrite: buildSuggestedRewrite(prompt, reasons),
+    suggestedRewrite: buildSuggestedRewrite(prompt, reasons, promptIntent),
   };
 };
 
-const buildSuggestedRewrite = (prompt, reasons) => {
+const buildCommitRewrite = (prompt) => {
+  const topic = prompt.length > 0 ? prompt.slice(0, 96) : 'the requested commit';
+  return [
+    `Commit: ${topic}`,
+    'Diff explanation: list the files touched and a one-line description of each change (e.g., "- packages/web/server/lib/promptcourt/evaluator.js: add commit intent classifier").',
+    'Tests: name the tests you ran or added (e.g., "ran evaluator.test.js, 12 passing; added 4 commit-gate cases").',
+    'Blast radius: state what this does NOT touch and whether it is backward compatible (e.g., "only touches promptcourt evaluator, no schema or route changes, backward compatible").',
+    'Constraints: do not amend prior commits, do not skip hooks, do not force-push.',
+  ].join('\n');
+};
+
+const buildSuggestedRewrite = (prompt, reasons, promptIntent = 'normal') => {
+  if (promptIntent === 'commit') return buildCommitRewrite(prompt);
   const topic = prompt.length > 0 ? prompt.slice(0, 96) : 'the requested change';
   const readOnlyIntent = /\b(go through|explore|inspect|browse|tour|survey|review|audit|study|map|analy[sz]e|summari[sz]e|explain|walk\s+through)\b/i.test(topic)
     && !MUTATION_VERBS.test(topic);
