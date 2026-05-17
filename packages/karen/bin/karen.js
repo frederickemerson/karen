@@ -1092,9 +1092,14 @@ const teachAfterDiscard = ({ prompt, generatedDiff, reason }) => {
 };
 
 const runQuiz = async ({ prompt, generatedDiff, cwd = null, outerRl = null }) => {
-  // Pause any outer readline so we don't double-bind stdin; a single rl owns the TTY during quiz.
-  if (outerRl && typeof outerRl.pause === 'function') outerRl.pause();
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  // Single readline owns the TTY during the quiz. Reuse the outer one if we
+  // got it (avoids double-binding stdin which caused every keystroke to echo
+  // twice — typing `2` produced `22` and parsed as `22 - 1 = 21`, an invalid
+  // option index, throwing the user out for a UI bug). Only create a fresh
+  // one when no outer rl exists (e.g. `karen "<prompt>"` one-shot path).
+  const ownsRl = !outerRl;
+  const rl = outerRl || readline.createInterface({ input: process.stdin, output: process.stdout });
+
   const quiz = await buildQuiz({
     prompt,
     generatedDiff,
@@ -1128,8 +1133,23 @@ const runQuiz = async ({ prompt, generatedDiff, cwd = null, outerRl = null }) =>
         const block = process.stdout.isTTY ? blocks[optionIndex % blocks.length] : '';
         line(`${block} ${optionIndex + 1} ${ansi.reset} ${option}`);
       });
-      const answer = await rl.question(color('answer > ', 'green'));
-      const selected = Number(answer.trim()) - 1;
+      // Loop until we get a parseable answer 1..N. Empty input or non-numeric
+      // re-prompts instead of failing the quiz on a typo.
+      let selected = -1;
+      while (true) {
+        const raw = (await rl.question(color('answer > ', 'green'))).trim();
+        if (!raw) {
+          line(color(`Type a digit 1-${question.options.length}.`, 'amber'));
+          continue;
+        }
+        const parsed = Number.parseInt(raw, 10);
+        if (!Number.isFinite(parsed) || parsed < 1 || parsed > question.options.length) {
+          line(color(`Pick 1-${question.options.length}. "${raw}" is not a choice.`, 'amber'));
+          continue;
+        }
+        selected = parsed - 1;
+        break;
+      }
       if (selected !== question.answer) {
         line('');
         line(color('THROWN OUT', 'red'));
@@ -1144,8 +1164,7 @@ const runQuiz = async ({ prompt, generatedDiff, cwd = null, outerRl = null }) =>
     return true;
   } finally {
     stopMusic();
-    rl.close();
-    if (outerRl && typeof outerRl.resume === 'function') outerRl.resume();
+    if (ownsRl) rl.close();
   }
 };
 
