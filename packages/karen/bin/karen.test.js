@@ -12,6 +12,28 @@ import {
   openCodeHookStrategies,
   selectOpenCodeInterceptionStrategy,
 } from '../lib/opencode-hook.js';
+import {
+  karenRewritePrompt,
+  rewriteAiAllowed,
+  __karenRewriteTest,
+} from '../lib/karen-rewrite.js';
+import {
+  getCachedProfile,
+  invalidateProfileCache,
+  isTimingEnabled,
+  timeSync,
+  timeAsync,
+  __karenTimingTest,
+} from '../lib/karen-timing.js';
+import {
+  formatGuardBadge,
+  formatBlockedSidebar,
+  createScreenTailBuffer,
+  updateScreenTail,
+  screenTailVisible,
+  screenTailRaw,
+  __karenTuiGuardTest,
+} from '../lib/karen-tui-guard.js';
 
 const originalEnv = { ...process.env };
 const originalFetch = globalThis.fetch;
@@ -438,5 +460,163 @@ describe('Karen OpenCode hook adapter boundary', () => {
       attached: false,
       strategy: openCodeHookStrategies.PTY_STRATEGY,
     });
+  });
+});
+
+describe('Karen prompt rewriter', () => {
+  test('skips the OpenAI call and reports no-api-key when OPENAI_API_KEY is unset', async () => {
+    delete process.env.OPENAI_API_KEY;
+    delete process.env.KAREN_REWRITE_AI;
+    expect(rewriteAiAllowed()).toBe(false);
+    const result = await karenRewritePrompt({
+      original: 'fix auth',
+      evaluation: { score: 18, reasons: ['No concrete target outcome'] },
+      cwd: process.cwd(),
+    });
+    expect(result.ok).toBe(false);
+    expect(result.source).toBe('no-api-key');
+    expect(typeof result.reason).toBe('string');
+  });
+
+  test('calls the Responses API with a strict json_schema and returns the rewrite payload', async () => {
+    process.env.OPENAI_API_KEY = 'test-key';
+    process.env.KAREN_REWRITE_AI = '1';
+    process.env.KAREN_REWRITE_MODEL = 'gpt-5.5';
+    let captured = null;
+    const fetchImpl = async (url, init) => {
+      captured = { url, init };
+      return {
+        ok: true,
+        json: async () => ({
+          output_text: JSON.stringify({
+            rewrite: 'Update packages/karen/lib/karen-auth.js to reject expired tokens; preserve current API.',
+            files: ['packages/karen/lib/karen-auth.js'],
+            acceptance_criteria: [
+              'Expired tokens return null from loadAuth',
+              'Existing happy-path tests still pass',
+            ],
+            scope: 'Only karen-auth.js and its existing tests.',
+            tests: 'Add a unit test that injects an expired token.',
+          }),
+        }),
+      };
+    };
+    const result = await karenRewritePrompt({
+      original: 'fix auth',
+      evaluation: { score: 18, reasons: ['No clear files'] },
+      cwd: process.cwd(),
+      branch: 'main',
+      files: ['packages/karen/lib/karen-auth.js'],
+      recentCommits: ['abc1234 wip'],
+      fetchImpl,
+    });
+    expect(result.ok).toBe(true);
+    expect(result.source).toBe('ai:gpt-5.5');
+    expect(result.rewrite).toContain('packages/karen/lib/karen-auth.js');
+    expect(result.rewrite).toContain('Acceptance criteria');
+    expect(captured.url).toBe('https://api.openai.com/v1/responses');
+    const body = JSON.parse(captured.init.body);
+    expect(body.model).toBe('gpt-5.5');
+    expect(body.text.format.type).toBe('json_schema');
+    expect(body.text.format.schema.required).toContain('rewrite');
+  });
+
+  test('returns source=error when the API responds non-OK', async () => {
+    process.env.OPENAI_API_KEY = 'test-key';
+    process.env.KAREN_REWRITE_AI = '1';
+    const result = await karenRewritePrompt({
+      original: 'fix it',
+      evaluation: { score: 12, reasons: ['Vague'] },
+      cwd: process.cwd(),
+      fetchImpl: async () => ({ ok: false, status: 503, text: async () => 'unavailable' }),
+    });
+    expect(result.ok).toBe(false);
+    expect(result.source).toBe('error');
+    expect(result.reason).toContain('503');
+  });
+
+  test('formatRewriteForDisplay joins the structured payload into readable sections', () => {
+    const text = __karenRewriteTest.formatRewriteForDisplay({
+      rewrite: 'Update foo.js',
+      files: ['foo.js'],
+      scope: 'foo only',
+      acceptance_criteria: ['behavior X works'],
+      tests: 'unit test for X',
+    });
+    expect(text).toContain('Update foo.js');
+    expect(text).toContain('Files: foo.js');
+    expect(text).toContain('Acceptance criteria');
+    expect(text).toContain('Tests: unit test for X');
+  });
+});
+
+describe('Karen timing + profile cache', () => {
+  test('isTimingEnabled tracks KAREN_VERBOSE_TIMING and timeSync is a no-op when off', () => {
+    delete process.env.KAREN_VERBOSE_TIMING;
+    expect(isTimingEnabled()).toBe(false);
+    let called = false;
+    const value = timeSync('noop', () => { called = true; return 42; });
+    expect(called).toBe(true);
+    expect(value).toBe(42);
+  });
+
+  test('timeAsync awaits and returns the resolved value', async () => {
+    const result = await timeAsync('noop-async', async () => 'ok');
+    expect(result).toBe('ok');
+  });
+
+  test('getCachedProfile serves the same value within the TTL window', () => {
+    __karenTimingTest._resetCache();
+    let calls = 0;
+    const fakeStore = { getProfile: () => { calls += 1; return { user: { username: 'u' }, stats: { disciplineScore: calls } }; } };
+    const first = getCachedProfile(fakeStore, 'u');
+    const second = getCachedProfile(fakeStore, 'u');
+    expect(first).toBe(second);
+    expect(calls).toBe(1);
+    invalidateProfileCache('u');
+    const third = getCachedProfile(fakeStore, 'u');
+    expect(third).not.toBe(first);
+    expect(calls).toBe(2);
+  });
+});
+
+describe('Karen TUI guard overlay', () => {
+  test('formatGuardBadge returns a coloured "karen guard" pill', () => {
+    const badge = formatGuardBadge({ active: true });
+    expect(badge).toContain('karen guard');
+  });
+
+  test('formatGuardBadge with active=false returns empty', () => {
+    expect(formatGuardBadge({ active: false })).toBe('');
+  });
+
+  test('formatBlockedSidebar renders verdict header and charges with wrapping', () => {
+    const lines = formatBlockedSidebar(
+      { score: 32, reasons: ['No clear files, subsystem, or scope boundary', 'Missing acceptance criteria'] },
+      { width: 38 },
+    );
+    const flat = lines.join('\n');
+    expect(flat).toContain('PROMPTCOURT CHECK');
+    expect(flat).toContain('BLOCKED 32/100');
+    expect(flat).toContain('No clear files');
+    expect(flat).toContain('Missing acceptance criteria');
+  });
+
+  test('updateScreenTail keeps the visible-line ring usable after ANSI churn', () => {
+    const buffer = createScreenTailBuffer({ maxBytes: 200, maxLines: 8 });
+    updateScreenTail(buffer, 'message\n> ');
+    updateScreenTail(buffer, '\x1b[2J\x1b[H\x1b[38;5;1m');
+    updateScreenTail(buffer, 'Select provider\nOpenAI\nAnthropic\n');
+    const visible = screenTailVisible(buffer, 6);
+    expect(visible).toContain('Select provider');
+    expect(visible).toContain('OpenAI');
+    // raw tail still bounded:
+    expect(screenTailRaw(buffer).length).toBeLessThanOrEqual(200);
+  });
+
+  test('openCodePluginAvailability honestly reports no SDK is installed', () => {
+    const status = __karenTuiGuardTest.openCodePluginAvailability({ env: {} });
+    expect(status.sdkInstalled).toBe(false);
+    expect(status.reason).toContain('@opencode-ai/sdk');
   });
 });
