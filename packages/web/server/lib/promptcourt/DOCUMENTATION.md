@@ -24,7 +24,7 @@ Encapsulate every server-side decision Karen makes about a prompt: judgment, rec
 
 ## Files
 
-- [`evaluator.js`](evaluator.js) - prompt scoring. Exports `evaluatePrompt(prompt)` returning `{ score, verdict, allowed, intent, promptIntent, reasons, chips, dimensions, suggestedRewrite }`, plus `extractPromptText(body)` for OpenCode-shaped request bodies and the commit-gate helpers `classifyPromptIntent`, `diffExplanationMissing`, `testsNotNamed`, and `blastRadiusMissing`. A fast-path classifier short-circuits conversational greetings (`intent='conversational'`) and read-only exploration prompts (`intent='exploration'`) to `approved` without scoring; everything else falls through to the dimensional scorer where score < ~25 (or hopeless without concrete intent) produces `verdict='blocked'`. Reasons explain the charges. A second classifier, `classifyPromptIntent`, returns `'commit' | 'normal'` and is exposed on every result as `promptIntent`; when it returns `'commit'` and any of the three commit-specific checks fail (no diff explanation, no tests named, no blast-radius owner), the verdict is force-`blocked`, the `commit-gate-failed` chip is prepended, and the failing commit chip labels are mirrored into `reasons[]`. The `chips` array is always populated (empty when approved without findings) and never replaces `reasons[]` — both shapes are returned for backward compatibility.
+- [`evaluator.js`](evaluator.js) - prompt scoring. Exports `evaluatePrompt(prompt)` returning `{ score, verdict, allowed, intent, promptIntent, reasons, chips, dimensions, suggestedRewrite }`, `classifyPromptIntent(prompt)` returning `'commit' | 'normal'`, plus `extractPromptText(body)` for OpenCode-shaped request bodies. A fast-path classifier short-circuits conversational greetings (`intent='conversational'`) and read-only exploration prompts (`intent='exploration'`) to `approved` without scoring; everything else falls through to the dimensional scorer where score < ~25 (or hopeless without concrete intent) produces `verdict='blocked'`. On top of the general gate, a commit-intent layer fires when the prompt is asking to commit, push, open a PR, or merge: if it omits a diff explanation, named tests, or a blast-radius claim, the verdict is forced to `blocked` and commit-specific chips are added. `reasons` (string[]) is the legacy unstructured explanation; `chips` (typed array of `{ id, label, severity, category }`) is the structured form callers should prefer.
 - [`quiz.js`](quiz.js) - shared quiz builder used by the Karen CLI and the GUI runtime. Exports `buildQuiz({ prompt, generatedDiff, sessionId?, onAiFallback? })` (returns `{ source, questions, summary }`) plus the env-driven flags `quizAiAllowed`, `quizModel`, `quizReasoningEffort`, `quizTimeoutMs`, and the LRU reroll cache helpers `clearQuizCache` and `getQuizCacheStats` (TTL 1h, max 500 entries; keyed by SHA-256 of `diffContent + sessionId` so reroll requests for the same diff/session reuse a previous quiz instead of re-generating). Internally calls `buildAiQuiz` when an OpenAI key is present and `KAREN_QUIZ_AI` is not disabled; falls back to `buildParserQuiz` (deterministic, evidence-driven) on failure or when AI is off. Reads `OPENAI_API_KEY`, `KAREN_QUIZ_MODEL` (default `gpt-5.5-pro`), `KAREN_QUIZ_REASONING_EFFORT`, and `KAREN_QUIZ_TIMEOUT_MS`.
 - [`quiz-analyzer.js`](quiz-analyzer.js) - TypeScript-AST-backed diff analyzer. Exports `parseDiff(diff)`, `analyzeQuizEvidence(summary, { cwd })` (aliased as `analyzeDiffImpact`), and helpers (`isTestFile`, `isConfigFile`, `isJavaScriptLikeFile`, `extractSymbols`). Produces test-coverage mapping, exported/changed-symbol sets, call-site detail, and config-impact evidence used by `quiz.js` to build evidence-grounded questions. Lives here (not in `packages/karen/lib/`) so the CLI and GUI quizzes share the same analysis.
 - [`diff-synthesizer.js`](diff-synthesizer.js) - GUI-only diff generator. Exports `synthesizeGuiDiff({ prompt })` returning `{ diff, source }`. Calls OpenAI with a system prompt to produce a plausible unified diff for the user's prompt. If no key is present, AI is disabled, the model returns non-diff content, or the call fails, it throws instead of returning a fixture. The Karen CLI does not use this — it operates against real worktree diffs.
@@ -97,40 +97,9 @@ graph TD
 
 The full GUI composer uses this same endpoint for non-slash normal-mode prompts. The UI creates the run, redirects to `/karen?run=<id>`, opens the SSE stream, and mounts the Kahoot-style quiz modal when the run reaches `quiz_required`. Slash commands are intentionally excluded so OpenCode command autocomplete and command execution still work.
 
-## Evaluation shape
-
-`evaluatePrompt(prompt)` returns:
-
-```ts
-type Severity = 'critical' | 'warn';
-type ChipCategory = 'commit' | 'general';
-
-type Chip = {
-  id: string;        // stable id; e.g. 'commit-gate-failed', 'no-files', 'vague-language'
-  label: string;     // human-readable copy rendered in the UI
-  severity: Severity;
-  category: ChipCategory;
-};
-
-type Evaluation = {
-  score: number;                       // 0..100
-  verdict: 'approved' | 'blocked';
-  allowed: boolean;                    // verdict === 'approved'
-  intent: 'conversational' | 'exploration' | null;  // fast-path tag
-  promptIntent: 'commit' | 'normal';   // commit-aware classifier
-  reasons: string[];                   // historical, plain-string charges
-  chips: Chip[];                       // structured charges (always present)
-  dimensions: Record<string, number>;
-  suggestedRewrite: string;
-};
-```
-
-Rule: `chips` is **always populated** (empty array when there is nothing to charge). It is additive; it never replaces `reasons[]`. Existing consumers that read `result.reasons`, `result.allowed`, or `result.verdict` keep working unchanged. Commit chip ids: `commit-gate-failed`, `no-diff-explanation`, `no-tests-named`, `no-blast-radius`. General chip ids mapped from `reasons[]`: `no-target-outcome`, `no-files`, `no-acceptance`, `no-context`, `no-verification`, `no-constraints`, `vague-language`, `lazy-prompt-warning`.
-
 ## Invariants
 
 - **Verdict is owned by `evaluator.js`.** No other file invents or overrides verdicts. Routes and CLI render the result faithfully.
-- **Always populate `chips`, never break `reasons[]`.** Every evaluation must include a `chips` array (possibly empty). Commit-layer enforcement mirrors commit chip labels into `reasons[]` so existing consumers that only read `reasons` still see the commit-gate failure.
 - **Local write succeeds before cloud sync starts.** Cloud sync uses already-stored records as input.
 - **Cloud failures never throw.** `cloud.js` catches and logs only when `KAREN_CLOUD_DEBUG=1`. Storage continues regardless.
 - **Redaction runs before any cross-boundary write.** Routes call `redactPublicText` before storing posts. The CLI does the same before recording.
@@ -140,9 +109,49 @@ Rule: `chips` is **always populated** (empty array when there is nothing to char
 - **GUI runs are bounded too.** `gui-run.js` enforces `GUI_RUN_LIMIT=100` runs and `GUI_RUN_EVENT_LIMIT=50` events per run. The oldest run is evicted when capacity is reached.
 - **Replay export never runs the renderer eagerly.** `replay-video.js` returns a Remotion-ready manifest; selecting `KAREN_REPLAY_RENDERER=remotion` activates the Remotion path but it still throws explicitly if no Karen Remotion bundle is configured. Do not pretend an MP4 exists.
 
+## Evaluation output shape
+
+```ts
+type Chip = {
+  id:
+    | 'commit-gate-failed'
+    | 'diff-explanation-missing'
+    | 'tests-not-named'
+    | 'blast-radius-missing'
+    | 'no-files'
+    | 'no-acceptance'
+    | 'no-tests'
+    | 'no-context'
+    | 'no-verification'
+    | 'no-constraints'
+    | 'no-target-outcome'
+    | 'vague-language'
+    | 'lazy-prompt-warning';
+  label: string;       // short, display-ready (e.g. "No diff explanation")
+  severity: 'critical' | 'warn';
+  category: 'commit' | 'general' | 'long-prompt' | 'secrets';
+};
+
+type Evaluation = {
+  score: number;
+  verdict: 'approved' | 'blocked';
+  allowed: boolean;
+  intent: 'conversational' | 'exploration' | null;   // fast-path intent
+  promptIntent: 'commit' | 'normal';                  // commit classifier
+  reasons: string[];                                  // legacy, unstructured
+  chips: Chip[];                                      // structured replacement
+  dimensions: Record<string, number>;
+  suggestedRewrite: string;
+};
+```
+
+`reasons` is preserved for backward compatibility (Karen CLI's `printVerdict`, recorded `failureReasons`, redacted cloud payloads). New UI surfaces should consume `chips`.
+
 ## Change rules
 
 - Adding a new prompt-quality dimension means adding it to `dimensions` in `scorePrompt`, updating `reasons` thresholds, and refreshing the cap math. Update [`evaluator.test.js`](evaluator.test.js) accordingly.
+- Adding a new chip means adding the id to `CHIP_DEFS` in [`evaluator.js`](evaluator.js) (with label, severity, category), wiring it from the appropriate check, and updating the `Chip` union in this doc plus [`evaluator.test.js`](evaluator.test.js).
+- Commit-specific checks live in `evaluator.js` and run only when `classifyPromptIntent(prompt) === 'commit'`. False positives (e.g. "commit it to memory", "push notifications") must be filtered by `COMMIT_NEGATIVE_PATTERNS`.
 - Adding a new public-post type requires updating both [`storage.js`](storage.js) (`type` discriminator) and Convex (`publicPostValidator` in [`../../../../../convex/karen.ts`](../../../../../convex/karen.ts)).
 - New cloud-sync events should mirror the local `recordX` shape and reuse `sessionPayload` / `publicPostPayload` so Convex `ingestEvent` can dedupe via `localSessionId`.
 - New environment variables must be documented in [`../../../../../docs/karen/operations/env.md`](../../../../../docs/karen/operations/env.md).

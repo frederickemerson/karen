@@ -161,9 +161,12 @@ const COMMIT_POSITIVE_PATTERNS = [
   /\bcommit\s+(it|this|that|them)\s+(and|then|&)\s+push\b/i,
   /\bpush\s+(to|it\s+to)\s+(main|master|origin|remote|upstream|production|prod)\b/i,
   /\bpush\s+(the\s+)?(branch|changes?|commits?)\b/i,
-  /\bopen\s+a\s+(pr|pull\s+request)\b/i,
-  /\bcreate\s+a\s+(pr|pull\s+request)\b/i,
-  /\braise\s+a\s+(pr|pull\s+request)\b/i,
+  /\bopen\s+(a\s+)?(pr|pull\s+request)\b/i,
+  /\bcreate\s+(a\s+)?(pr|pull\s+request)\b/i,
+  /\braise\s+(a\s+)?(pr|pull\s+request)\b/i,
+  /\bmake\s+(a\s+)?(pr|pull\s+request)\b/i,
+  /\bcut\s+(a\s+)?(pr|pull\s+request)\b/i,
+  /\bmerge\s+(it|this|that|them|the\s+change|the\s+changes)\s+(to|into|in\s+to)\s+(main|master|trunk|develop|release)\b/i,
   /\bmerge\s+(to|into|in\s+to)\s+(main|master|trunk|develop|release)\b/i,
   /\bmerge\s+(the\s+)?(pr|pull\s+request|branch)\b/i,
   /\bship\s+(it|this|the\s+change|the\s+pr)\b/i,
@@ -367,9 +370,9 @@ const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
 const COMMIT_CHIP_ORDER = [
   { id: 'commit-gate-failed', label: 'Commit gate failed in the TUI.', severity: 'critical' },
-  { id: 'no-diff-explanation', label: 'No diff explanation', severity: 'critical', check: 'diff' },
-  { id: 'no-tests-named', label: 'No tests named', severity: 'critical', check: 'tests' },
-  { id: 'no-blast-radius', label: 'No blast-radius owner', severity: 'critical', check: 'blast' },
+  { id: 'diff-explanation-missing', label: 'No diff explanation', severity: 'critical', check: 'diff' },
+  { id: 'tests-not-named', label: 'No tests named', severity: 'critical', check: 'tests' },
+  { id: 'blast-radius-missing', label: 'No blast-radius owner', severity: 'critical', check: 'blast' },
 ];
 
 const scorePrompt = (rawPrompt) => {
@@ -422,7 +425,15 @@ const scorePrompt = (rawPrompt) => {
   if (dimensions.riskAwareness < 5) reasons.push('No constraints for risky or unrelated changes');
   if (vagueHits > 0) reasons.push(hasConcreteIntent ? 'Lazy prompt: allowed, but Karen will quiz harder' : 'Vague language without operational detail');
 
-  let verdict = score < 25 || (score < 40 && !hasConcreteIntent) || (hopelessHits > 0 && !hasConcreteIntent) ? 'blocked' : 'approved';
+  // Sub-4-word prompts without a file path are blocked even if a single word
+  // matches a scope keyword. "fix auth" blocks; "fix this crash in the login flow" doesn't.
+  const tooVagueToRun = words.length < 4 && !hasCodeReference;
+  let verdict = (
+    score < 25
+    || tooVagueToRun
+    || (score < 40 && !hasConcreteIntent)
+    || (hopelessHits > 0 && !hasConcreteIntent)
+  ) ? 'blocked' : 'approved';
 
   // Commit-specific enforcement: if classifier says this is a commit/push/PR
   // prompt and any of the three commit-specific checks fail, force-block.

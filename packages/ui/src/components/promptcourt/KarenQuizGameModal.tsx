@@ -325,15 +325,12 @@ export const KarenQuizGameModal: React.FC<KarenQuizModalProps> = ({
 
       if (!result.correct) {
         setWrongQuestion(question);
-        // Briefly show the full-screen GIT RESET --HARD card (matches the
-        // vision frame: red sandbox-deleted screen), then drop into the
-        // existing review panel so the user sees the correct answer + why.
+        // Show the launch-video "GIT RESET --HARD" full-screen card first.
+        // This component owns auto-dismiss after a few seconds; the detail
+        // explainer ('wrong' stage) can be reached via the card if needed.
         setStage('reset');
         void playKarenEventAudio('quiz-fail');
         if (onFailed) onFailed(run, question);
-        window.setTimeout(() => {
-          setStage('wrong');
-        }, 3500);
         return;
       }
 
@@ -370,6 +367,21 @@ export const KarenQuizGameModal: React.FC<KarenQuizModalProps> = ({
   }, [answerState.inFlight, answerState.selected, onFailed, onPassed, question, questionIndex, run, totalQuestions]);
 
   if (!open || !run || !run.quiz) return null;
+
+  // Launch-video frame 9 + frame 15: full-screen red GIT RESET --HARD card
+  // shown for ~3.5s after a wrong answer before the modal unmounts. Rendered
+  // standalone (not inside the diff/quiz split layout) so it covers the entire
+  // OpenChamber chrome the way the video shows it.
+  if (stage === 'reset' && wrongQuestion) {
+    return (
+      <GitResetCard
+        run={run}
+        wrongQuestion={wrongQuestion}
+        onSeeDetails={() => setStage('wrong')}
+        onDismiss={handleClose}
+      />
+    );
+  }
 
   const diffLines = run.diff ? run.diff.split('\n') : [];
 
@@ -483,35 +495,15 @@ export const KarenQuizGameModal: React.FC<KarenQuizModalProps> = ({
               />
             ) : null}
 
-
             {stage === 'passed' ? (
               <PassedPanel run={run} onClose={handleClose} />
             ) : null}
           </section>
         </div>
       </div>
-      {stage === 'reset' ? <GitResetCard /> : null}
     </div>
   );
 };
-
-const GitResetCard: React.FC = () => (
-  <div
-    className="absolute inset-0 z-[10] flex flex-col items-center justify-center bg-rose-600 px-8 py-10 text-white"
-    role="alert"
-    aria-live="assertive"
-  >
-    <div className="rounded-sm bg-black/30 px-3 py-1 font-mono text-[11px] uppercase tracking-[0.28em] text-white">
-      Redo ur work
-    </div>
-    <h1 className="mt-8 text-center font-mono text-5xl font-black uppercase tracking-tight text-white sm:text-7xl md:text-8xl">
-      git reset --hard
-    </h1>
-    <p className="mt-8 max-w-3xl text-center text-2xl font-semibold leading-tight text-white sm:text-3xl">
-      Sandbox deleted. Real repo stays clean.
-    </p>
-  </div>
-);
 
 const IntroPanel: React.FC<{
   run: KarenQuizRun;
@@ -672,6 +664,90 @@ const WrongPanel: React.FC<{
       <Button type="button" className="mt-6 bg-rose-600 hover:bg-rose-500" onClick={onClose}>
         Close
       </Button>
+    </div>
+  );
+};
+
+const GIT_RESET_AUTO_DISMISS_MS = 3500;
+
+const GitResetCard: React.FC<{
+  run: KarenQuizRun;
+  wrongQuestion: KarenQuizQuestion;
+  onSeeDetails: () => void;
+  onDismiss: () => void;
+}> = ({ run, wrongQuestion, onSeeDetails, onDismiss }) => {
+  React.useEffect(() => {
+    // Launch video pacing: hold the red card ~3.5s, then unmount automatically.
+    const timer = window.setTimeout(() => {
+      onDismiss();
+    }, GIT_RESET_AUTO_DISMISS_MS);
+    void playKarenEventAudio('rollback');
+    return () => {
+      window.clearTimeout(timer);
+    };
+    // run / wrongQuestion shape changes do not affect timer cadence.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <div
+      role="alertdialog"
+      aria-live="assertive"
+      aria-label="Karen rolled back the sandbox"
+      className="fixed inset-0 z-[1100] flex flex-col items-center justify-center bg-[var(--status-error)] px-6 py-10 text-center text-white"
+    >
+      <div className="mb-6 inline-flex items-center gap-2 rounded-sm bg-black/30 px-3 py-1 font-mono text-[11px] uppercase tracking-[0.22em] text-white">
+        <RiSkullLine className="size-4" />
+        Redo ur work
+      </div>
+      <div className="font-mono text-sm uppercase tracking-[0.3em] text-white/80">
+        karen rolled back the sandbox
+      </div>
+      <h1 className="mt-3 font-mono text-5xl font-extrabold uppercase tracking-tight text-white sm:text-7xl md:text-8xl">
+        GIT RESET --HARD
+      </h1>
+      <p className="mt-6 max-w-2xl text-xl leading-snug text-white/95 sm:text-2xl">
+        Sandbox deleted. Real repo stays clean.
+      </p>
+      <p className="mt-3 max-w-xl typography-body text-white/80">
+        You answered the read check wrong. Karen threw your patch out.
+      </p>
+      <div className="mt-8 grid w-full max-w-xl gap-2 text-left">
+        <div className="rounded-md border border-white/30 bg-black/20 px-4 py-3 font-mono text-xs text-white/90">
+          <div className="text-[11px] uppercase tracking-[0.18em] text-white/70">Wrong on</div>
+          <div className="mt-1 break-words">{wrongQuestion.prompt}</div>
+        </div>
+        <div className="rounded-md border border-white/30 bg-black/20 px-4 py-3 font-mono text-xs text-white/90">
+          <div className="text-[11px] uppercase tracking-[0.18em] text-white/70">Files lost from sandbox</div>
+          <div className="mt-1 break-words">
+            {run.changedFiles && run.changedFiles.length > 0
+              ? run.changedFiles.join(', ')
+              : 'No files survived.'}
+          </div>
+        </div>
+      </div>
+      <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="border-white/40 bg-black/20 text-white hover:bg-black/40"
+          onClick={onSeeDetails}
+        >
+          Show why
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          className="bg-white text-[var(--status-error)] hover:bg-white/90"
+          onClick={onDismiss}
+        >
+          Close
+        </Button>
+      </div>
+      <div className="mt-6 font-mono text-[11px] uppercase tracking-[0.18em] text-white/60">
+        auto closing…
+      </div>
     </div>
   );
 };

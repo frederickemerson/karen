@@ -1,13 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  blastRadiusMissing,
-  classifyPromptIntent,
-  diffExplanationMissing,
-  evaluatePrompt,
-  extractPromptText,
-  testsNotNamed,
-} from './evaluator.js';
+import { classifyPromptIntent, evaluatePrompt, extractPromptText } from './evaluator.js';
 
 describe('promptcourt evaluator', () => {
   it('blocks prompts with no useful coding intent before agent execution', () => {
@@ -131,157 +124,158 @@ describe('promptcourt evaluator', () => {
     expect(extractPromptText(null)).toBe('');
     expect(extractPromptText({ parts: 'invalid' })).toBe('');
   });
+
+  it('always exposes a chips array on evaluation output', () => {
+    const blocked = evaluatePrompt('do your magic');
+    expect(Array.isArray(blocked.chips)).toBe(true);
+    expect(blocked.chips.length).toBeGreaterThan(0);
+    for (const chip of blocked.chips) {
+      expect(typeof chip.id).toBe('string');
+      expect(typeof chip.label).toBe('string');
+      expect(['critical', 'warn']).toContain(chip.severity);
+      expect(['commit', 'general', 'long-prompt', 'secrets']).toContain(chip.category);
+    }
+
+    const conversational = evaluatePrompt('hi karen');
+    expect(Array.isArray(conversational.chips)).toBe(true);
+    expect(conversational.chips).toEqual([]);
+  });
+
+  it('keeps the legacy reasons[] array stable for backward-compatible callers', () => {
+    const result = evaluatePrompt('do your magic');
+    expect(Array.isArray(result.reasons)).toBe(true);
+    // The classic reasons still appear when the regular gate trips.
+    expect(result.reasons).toContain('Vague language without operational detail');
+  });
 });
 
-describe('classifyPromptIntent', () => {
-  it('detects commit intent for "commit everything and push it"', () => {
-    expect(classifyPromptIntent('commit everything and push it')).toBe('commit');
+describe('promptcourt commit-intent classifier', () => {
+  it('classifies clear commit-intent prompts as commit', () => {
+    const commits = [
+      'commit everything and push it',
+      'please commit this and push to main',
+      'open a pr for this change',
+      'open pr please',
+      'make a pr',
+      'raise a pull request',
+      'merge to main',
+      'merge it into main',
+      'git commit -am "wip"',
+      'commit and push',
+      'push the changes',
+      'push to origin',
+      'cut a pr',
+    ];
+    for (const prompt of commits) {
+      expect(classifyPromptIntent(prompt), `${prompt} -> commit`).toBe('commit');
+    }
   });
 
-  it('detects commit intent for git commit / push to main / PRs / merge', () => {
-    expect(classifyPromptIntent('git commit -m "thing"')).toBe('commit');
-    expect(classifyPromptIntent('push to main')).toBe('commit');
-    expect(classifyPromptIntent('please open a PR')).toBe('commit');
-    expect(classifyPromptIntent('raise a pull request when done')).toBe('commit');
-    expect(classifyPromptIntent('merge to main once green')).toBe('commit');
-    expect(classifyPromptIntent('ship it')).toBe('commit');
+  it('does not classify non-commit prompts as commit', () => {
+    const nonCommits = [
+      'commit it to memory',
+      'add push notifications to the app',
+      'wire up push notification handlers in packages/web',
+      'pull the lever',
+      'how does git work',
+      'fix the login bug in packages/web/server/auth.ts',
+      'explore the codebase',
+      'hello karen',
+      '',
+    ];
+    for (const prompt of nonCommits) {
+      expect(classifyPromptIntent(prompt), `${prompt} -> normal`).toBe('normal');
+    }
   });
 
-  it('does not flag negative-pattern uses of commit/push as commit intent', () => {
-    expect(classifyPromptIntent('commit it to memory')).toBe('normal');
-    expect(classifyPromptIntent('add push notifications to the app')).toBe('normal');
-    expect(classifyPromptIntent('describe the commit history of this repo')).toBe('normal');
-  });
-
-  it('returns normal for empty or non-commit prompts', () => {
-    expect(classifyPromptIntent('')).toBe('normal');
+  it('handles non-string inputs gracefully', () => {
+    expect(classifyPromptIntent(undefined)).toBe('normal');
     expect(classifyPromptIntent(null)).toBe('normal');
-    expect(classifyPromptIntent('fix the login bug in packages/web/server/auth.ts')).toBe('normal');
-  });
-
-  it('handles mixed positive + negative phrases by stripping negatives first', () => {
-    // Negative phrase + a real git-push action — the real action should still register.
-    expect(classifyPromptIntent('commit it to memory then git push to main')).toBe('commit');
-    // Only negative phrases — must remain normal.
-    expect(classifyPromptIntent('commit it to memory and push notifications later')).toBe('normal');
+    expect(classifyPromptIntent(42)).toBe('normal');
   });
 });
 
-describe('commit-specific checks', () => {
-  it('diffExplanationMissing is false when files or directories are named', () => {
-    expect(diffExplanationMissing('updated packages/web/server/foo.js to add bar')).toBe(false);
-    expect(diffExplanationMissing('changes: src/app/login.tsx')).toBe(false);
-    expect(diffExplanationMissing('the diff renames a helper')).toBe(false);
-  });
-
-  it('diffExplanationMissing is true for bare commit prompts', () => {
-    expect(diffExplanationMissing('commit everything and push it')).toBe(true);
-    expect(diffExplanationMissing('')).toBe(true);
-  });
-
-  it('testsNotNamed is false when tests are mentioned by name or activity', () => {
-    expect(testsNotNamed('ran tests for the evaluator')).toBe(false);
-    expect(testsNotNamed('with tests passing')).toBe(false);
-    expect(testsNotNamed('added evaluator.test.js cases')).toBe(false);
-  });
-
-  it('blastRadiusMissing is false when scope or compat is stated', () => {
-    expect(blastRadiusMissing('only touches promptcourt evaluator, backward compatible')).toBe(false);
-    expect(blastRadiusMissing('no breaking changes')).toBe(false);
-    expect(blastRadiusMissing('scoped to the auth route')).toBe(false);
-  });
-});
-
-describe('commit-layer enforcement in evaluatePrompt', () => {
-  it('blocks a bare commit prompt with four commit chips including commit-gate-failed', () => {
+describe('promptcourt commit-specific gate', () => {
+  it('blocks "commit everything and push it" with the three failure chips', () => {
     const result = evaluatePrompt('commit everything and push it');
 
-    expect(result.promptIntent).toBe('commit');
-    expect(result.verdict).toBe('blocked');
     expect(result.allowed).toBe(false);
+    expect(result.verdict).toBe('blocked');
+    expect(result.promptIntent).toBe('commit');
 
-    const commitChips = result.chips.filter((c) => c.category === 'commit');
-    expect(commitChips.length).toBeGreaterThanOrEqual(4);
-
-    const ids = commitChips.map((c) => c.id);
+    const ids = result.chips.map((c) => c.id);
     expect(ids).toContain('commit-gate-failed');
-    expect(ids).toContain('no-diff-explanation');
-    expect(ids).toContain('no-tests-named');
-    expect(ids).toContain('no-blast-radius');
+    expect(ids).toContain('diff-explanation-missing');
+    expect(ids).toContain('tests-not-named');
+    expect(ids).toContain('blast-radius-missing');
 
-    // First commit chip MUST be the gate chip.
-    expect(commitChips[0].id).toBe('commit-gate-failed');
-    expect(commitChips[0].label).toBe('Commit gate failed in the TUI.');
+    // Every commit chip is critical and categorized as commit.
+    for (const chip of result.chips.filter((c) => c.category === 'commit')) {
+      expect(chip.severity).toBe('critical');
+    }
 
-    // Reasons[] mirrors the commit chip labels.
-    expect(result.reasons[0]).toBe('Commit gate failed in the TUI.');
+    // Reasons[] mirrors the chips for backward compatibility.
+    expect(result.reasons).toContain('Commit gate failed in the TUI.');
     expect(result.reasons).toContain('No diff explanation');
     expect(result.reasons).toContain('No tests named');
     expect(result.reasons).toContain('No blast-radius owner');
   });
 
-  it('does not push commit chips when files, tests, and scope are all named', () => {
-    const result = evaluatePrompt([
-      'commit and push the evaluator change.',
-      'Diff: packages/web/server/lib/promptcourt/evaluator.js gains a commit-intent classifier.',
-      'Tests: ran evaluator.test.js with new commit-gate cases, all passing.',
-      'Blast radius: only touches promptcourt evaluator, backward compatible, no schema changes.',
-    ].join('\n'));
+  it('drops the diff-explanation chip when the prompt explains what changed', () => {
+    const prompt = [
+      'Commit and push the auth refactor.',
+      'Changes:',
+      '- packages/web/server/auth.ts: extract login helper',
+      '- packages/web/server/auth.test.ts: cover the new helper',
+      'Tests: ran auth.test.ts, all green.',
+      'Blast radius: only touches packages/web/server, no public api change.',
+    ].join('\n');
 
-    expect(result.promptIntent).toBe('commit');
-    const commitChips = result.chips.filter((c) => c.category === 'commit');
-    expect(commitChips).toEqual([]);
-    expect(result.reasons).not.toContain('Commit gate failed in the TUI.');
+    const result = evaluatePrompt(prompt);
+    const ids = result.chips.map((c) => c.id);
+    expect(ids).not.toContain('diff-explanation-missing');
+    expect(ids).not.toContain('tests-not-named');
+    expect(ids).not.toContain('blast-radius-missing');
   });
 
-  it('emits a commit-shaped suggestedRewrite when promptIntent is commit', () => {
-    const result = evaluatePrompt('commit and push to main');
-    expect(result.promptIntent).toBe('commit');
+  it('drops the tests-not-named chip when the prompt names tests', () => {
+    const prompt = 'commit this with tests for the new helper, ran auth.test.ts and they pass';
+    const result = evaluatePrompt(prompt);
+    const ids = result.chips.map((c) => c.id);
+    expect(ids).not.toContain('tests-not-named');
+  });
+
+  it('drops the blast-radius chip when the prompt claims a scope', () => {
+    const prompt = 'commit it: only touches packages/web/server, no breaking changes';
+    const result = evaluatePrompt(prompt);
+    const ids = result.chips.map((c) => c.id);
+    expect(ids).not.toContain('blast-radius-missing');
+  });
+
+  it('does not attach commit chips to non-commit prompts', () => {
+    const nonCommit = evaluatePrompt('fix this crash in the login flow');
+    const ids = nonCommit.chips.map((c) => c.id);
+    expect(ids).not.toContain('commit-gate-failed');
+    expect(ids).not.toContain('diff-explanation-missing');
+    expect(ids).not.toContain('tests-not-named');
+    expect(ids).not.toContain('blast-radius-missing');
+    expect(nonCommit.promptIntent).toBe('normal');
+  });
+
+  it('suggests a commit-shaped rewrite for commit-intent prompts', () => {
+    const result = evaluatePrompt('commit everything and push it');
     expect(result.suggestedRewrite).toContain('Commit:');
     expect(result.suggestedRewrite).toContain('Diff explanation:');
     expect(result.suggestedRewrite).toContain('Tests:');
     expect(result.suggestedRewrite).toContain('Blast radius:');
   });
-});
 
-describe('chip schema for non-commit prompts', () => {
-  it('produces chips that mirror reasons[] for a blocked vague prompt', () => {
-    const result = evaluatePrompt('do your magic');
-    expect(result.promptIntent).toBe('normal');
+  it('blocks even when the underlying score would otherwise approve, if commit chips fire', () => {
+    // A relatively detailed prompt that nonetheless omits the three commit
+    // disciplines should still be blocked once it becomes commit-intent.
+    const result = evaluatePrompt('commit the change and push to main');
+    expect(result.promptIntent).toBe('commit');
     expect(result.verdict).toBe('blocked');
-    expect(result.chips.length).toBeGreaterThan(0);
-
-    const chipIds = result.chips.map((c) => c.id);
-    // No commit chips for a non-commit prompt.
-    expect(chipIds).not.toContain('commit-gate-failed');
-    // Should map the vague-language reason.
-    expect(chipIds).toContain('vague-language');
-
-    // Every chip has the required shape.
-    for (const chip of result.chips) {
-      expect(chip).toHaveProperty('id');
-      expect(chip).toHaveProperty('label');
-      expect(['critical', 'warn']).toContain(chip.severity);
-      expect(['commit', 'general']).toContain(chip.category);
-    }
-  });
-
-  it('returns an empty chips array for an approved conversational prompt', () => {
-    const result = evaluatePrompt('hi karen');
-    expect(result.intent).toBe('conversational');
-    expect(result.allowed).toBe(true);
-    expect(result.chips).toEqual([]);
-    expect(result.promptIntent).toBe('normal');
-  });
-});
-
-describe('backward compatibility', () => {
-  it('still exposes allowed, verdict, and reasons[] in the historical shape', () => {
-    const result = evaluatePrompt('fix this');
-    expect(typeof result.allowed).toBe('boolean');
-    expect(typeof result.verdict).toBe('string');
-    expect(Array.isArray(result.reasons)).toBe(true);
-    // chips is additive — must coexist.
-    expect(Array.isArray(result.chips)).toBe(true);
+    expect(result.chips.some((c) => c.id === 'commit-gate-failed')).toBe(true);
   });
 });

@@ -1,0 +1,14 @@
+import { chromium } from '@playwright/test';
+const browser = await chromium.launch({ headless: true });
+const page = await browser.newPage();
+await page.goto('https://karen-granny.vercel.app/link?code=ABCD-EFGH', { waitUntil: 'domcontentloaded' });
+await page.waitForTimeout(6000);
+console.log('Email input present:', await page.locator('input[type=email], input[name=emailAddress]').count() > 0);
+console.log('Password input present:', await page.locator('input[type=password]').count() > 0);
+console.log('Continue/Sign up button:', await page.locator('button:has-text("Continue"), button:has-text("Sign up")').count() > 0);
+console.log('Any clerk-related element:', await page.locator('[data-clerk-element], [class*=clerk]').count());
+console.log('---');
+console.log('Body text (last 400 chars to see form):');
+const text = await page.locator('body').innerText();
+console.log(text.slice(-400));
+await browser.close();

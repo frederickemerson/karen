@@ -28,7 +28,6 @@ import { lazyWithChunkRecovery } from '@/lib/chunkLoadRecovery';
 import { ChatView } from '@/components/views/ChatView';
 
 // Heavy views loaded on-demand to reduce initial bundle parse time.
-const PromptCourtPanel = lazyWithChunkRecovery(() => import('@/components/promptcourt/PromptCourtPanel').then(m => ({ default: m.PromptCourtPanel })));
 const PlanView = lazyWithChunkRecovery(() => import('@/components/views/PlanView').then(m => ({ default: m.PlanView })));
 const GitView = lazyWithChunkRecovery(() => import('@/components/views/GitView').then(m => ({ default: m.GitView })));
 const DiffView = lazyWithChunkRecovery(() => import('@/components/views/DiffView').then(m => ({ default: m.DiffView })));
@@ -37,6 +36,10 @@ const FilesView = lazyWithChunkRecovery(() => import('@/components/views/FilesVi
 const SettingsView = lazyWithChunkRecovery(() => import('@/components/views/SettingsView').then(m => ({ default: m.SettingsView })));
 const SettingsWindow = lazyWithChunkRecovery(() => import('@/components/views/SettingsWindow').then(m => ({ default: m.SettingsWindow })));
 const MultiRunWindow = lazyWithChunkRecovery(() => import('@/components/views/MultiRunWindow').then(m => ({ default: m.MultiRunWindow })));
+// Karen PromptCourt panel — the in-app surface for the "PromptCourt" main tab.
+// Lazy-loaded so it does not pull Convex/Clerk modules into the initial bundle
+// for users who never open the panel.
+const PromptCourtPanel = lazyWithChunkRecovery(() => import('@/components/promptcourt/PromptCourtPanel').then(m => ({ default: m.PromptCourtPanel })));
 
 // Mobile drawer width as screen percentage
 const MOBILE_DRAWER_WIDTH_PERCENT = 85;

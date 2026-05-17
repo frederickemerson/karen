@@ -1,255 +1,182 @@
 import React from 'react';
-import { RiAlertLine, RiArrowDownSLine, RiArrowRightSLine, RiFileLine } from '@remixicon/react';
-import { Button } from '@/components/ui/button';
+import { RiArrowRightLine, RiFileTextLine, RiAlertLine } from '@remixicon/react';
+import type { KarenQuizRun } from './KarenQuizGameModal';
 import { cn } from '@/lib/utils';
 
-// Shape required by the diff review surface. Mirrors the GuiRun payload that
-// PromptCourtPage receives — only the diff-related fields are needed here.
-export type DiffReviewRun = {
-  id: string;
-  prompt?: string;
-  promptExcerpt?: string;
-  diff?: string | null;
-  diffSource?: string | null;
-  diffNote?: string | null;
-  changedFiles?: string[];
-};
-
-export type DiffReviewPanelProps = {
-  run: DiffReviewRun;
-  onStartQuiz: () => void;
-};
-
-type FileHunk = {
-  header: string;
-  lines: string[];
-};
-
+// Parses a unified diff blob into a per-file map of hunk lines. Done in the
+// browser because the Karen run payload already ships the raw diff and we do
+// not want to add a server call just to render it. Karen diff blobs are small.
 type ParsedFile = {
   path: string;
   additions: number;
   deletions: number;
-  hunks: FileHunk[];
+  lines: string[]; // raw lines including diff/index/@@/+/-/' ' headers
 };
 
-const parseUnifiedDiff = (diff: string): ParsedFile[] => {
+const parseDiff = (diff: string): ParsedFile[] => {
   if (!diff) return [];
-  const lines = diff.split('\n');
   const files: ParsedFile[] = [];
   let current: ParsedFile | null = null;
-  let currentHunk: FileHunk | null = null;
 
-  const finalizeHunk = () => {
-    if (current && currentHunk) {
-      current.hunks.push(currentHunk);
-      currentHunk = null;
-    }
+  const flush = () => {
+    if (current) files.push(current);
+    current = null;
   };
 
+  const lines = diff.split('\n');
   for (const line of lines) {
     if (line.startsWith('diff --git ')) {
-      finalizeHunk();
-      if (current) files.push(current);
-      // diff --git a/path b/path -- take the b/ side.
-      const match = line.match(/^diff --git a\/(.+) b\/(.+)$/);
-      const path = match ? match[2] : line.replace(/^diff --git /, '');
-      current = { path, additions: 0, deletions: 0, hunks: [] };
+      flush();
+      // Path is typically `diff --git a/<path> b/<path>` — take the b/ path.
+      const match = line.match(/diff --git a\/(.+) b\/(.+)/);
+      const path = match ? match[2] : line.slice('diff --git '.length).trim();
+      current = { path, additions: 0, deletions: 0, lines: [line] };
       continue;
     }
     if (!current) {
-      // Diff with no `diff --git` header (e.g., synthesized). Synthesize a file.
-      current = { path: '(unknown)', additions: 0, deletions: 0, hunks: [] };
+      // Lines before the first diff --git (some patches start with --- / +++).
+      // Treat them as a virtual entry so we never lose context.
+      current = { path: '(preamble)', additions: 0, deletions: 0, lines: [] };
     }
-    if (line.startsWith('+++ ') || line.startsWith('--- ') || line.startsWith('index ')) {
-      continue;
-    }
-    if (line.startsWith('@@')) {
-      finalizeHunk();
-      currentHunk = { header: line, lines: [] };
-      continue;
-    }
-    if (currentHunk) {
-      currentHunk.lines.push(line);
-    }
+    current.lines.push(line);
     if (line.startsWith('+') && !line.startsWith('+++')) current.additions += 1;
     else if (line.startsWith('-') && !line.startsWith('---')) current.deletions += 1;
   }
-  finalizeHunk();
-  if (current) files.push(current);
-
-  // De-dup against changedFiles passed separately is done by caller.
+  flush();
   return files;
 };
 
 const renderDiffLine = (text: string, key: number) => {
+  if (text.startsWith('diff --git ') || text.startsWith('index ') || text.startsWith('--- ') || text.startsWith('+++ ')) {
+    return <div key={key} className="text-muted-foreground">{text || ' '}</div>;
+  }
   if (text.startsWith('@@')) {
-    return (
-      <div key={key} className="text-[var(--status-info)]">
-        {text}
-      </div>
-    );
+    return <div key={key} className="text-[var(--status-info)]">{text}</div>;
   }
   if (text.startsWith('+')) {
-    return (
-      <div key={key} className="bg-[var(--status-success)]/10 text-[var(--status-success)]">
-        {text}
-      </div>
-    );
+    return <div key={key} className="bg-[var(--status-success)]/10 text-[var(--status-success)]">{text}</div>;
   }
   if (text.startsWith('-')) {
-    return (
-      <div key={key} className="bg-[var(--status-error)]/10 text-[var(--status-error)]">
-        {text}
-      </div>
-    );
+    return <div key={key} className="bg-[var(--status-error)]/10 text-[var(--status-error)]">{text}</div>;
   }
-  return (
-    <div key={key} className="text-foreground">
-      {text || ' '}
-    </div>
-  );
+  return <div key={key} className="text-foreground/80">{text || ' '}</div>;
 };
 
-const FileRow: React.FC<{
-  file: ParsedFile;
-  expanded: boolean;
-  onToggle: () => void;
-}> = ({ file, expanded, onToggle }) => (
-  <div className="border-b border-border last:border-b-0">
-    <button
-      type="button"
-      onClick={onToggle}
-      className="flex w-full items-center gap-3 px-3 py-2 text-left transition-colors hover:bg-muted/40"
-      aria-expanded={expanded}
-    >
-      {expanded ? (
-        <RiArrowDownSLine className="size-4 shrink-0 text-muted-foreground" />
-      ) : (
-        <RiArrowRightSLine className="size-4 shrink-0 text-muted-foreground" />
-      )}
-      <RiFileLine className="size-4 shrink-0 text-muted-foreground" />
-      <span className="min-w-0 flex-1 truncate font-mono text-xs text-foreground">{file.path}</span>
-      <span className="shrink-0 typography-micro font-medium text-[var(--status-success)]">+{file.additions}</span>
-      <span className="shrink-0 typography-micro font-medium text-[var(--status-error)]">-{file.deletions}</span>
-    </button>
-    {expanded ? (
-      <div className="border-t border-border bg-background/60">
-        {file.hunks.length > 0 ? (
-          file.hunks.map((hunk, hunkIndex) => (
-            <div key={`${file.path}-hunk-${hunkIndex}`} className="overflow-x-auto px-3 py-2 font-mono text-[12px] leading-5">
-              <div className="text-[var(--status-info)]">{hunk.header}</div>
-              {hunk.lines.map((diffLine, lineIndex) => renderDiffLine(diffLine, lineIndex))}
-            </div>
-          ))
-        ) : (
-          <div className="px-3 py-2 typography-micro text-muted-foreground">No hunk text recorded.</div>
-        )}
-      </div>
-    ) : null}
-  </div>
-);
+export type DiffReviewPanelProps = {
+  run: KarenQuizRun | null;
+  onStartQuiz: () => void;
+};
 
+// Frame 7 + frame 11 of the launch video: "Don't know what you changed?"
+// diff-review screen rendered inside the PromptCourt panel BEFORE the quiz
+// fires. The user reads the diff, then clicks "Take the read check →".
 export const DiffReviewPanel: React.FC<DiffReviewPanelProps> = ({ run, onStartQuiz }) => {
-  const parsedFiles = React.useMemo(() => parseUnifiedDiff(run.diff ?? ''), [run.diff]);
+  const files = React.useMemo(() => parseDiff(run?.diff ?? ''), [run?.diff]);
+  const [activePath, setActivePath] = React.useState<string | null>(null);
 
-  // Fold changedFiles that aren't in the parsed diff back in as zero-stat entries
-  // so the list always lines up with the run's declared changed files.
-  const files = React.useMemo<ParsedFile[]>(() => {
-    if (!run.changedFiles || run.changedFiles.length === 0) return parsedFiles;
-    const known = new Set(parsedFiles.map((file) => file.path));
-    const extras: ParsedFile[] = run.changedFiles
-      .filter((path) => !known.has(path))
-      .map((path) => ({ path, additions: 0, deletions: 0, hunks: [] }));
-    return [...parsedFiles, ...extras];
-  }, [parsedFiles, run.changedFiles]);
+  React.useEffect(() => {
+    // Reset selection when the run changes.
+    setActivePath(files[0]?.path ?? null);
+  }, [files]);
 
-  const [expanded, setExpanded] = React.useState<Record<string, boolean>>(() => {
-    // First file open by default; rest collapsed.
-    if (files.length === 0) return {};
-    return { [files[0].path]: true };
-  });
+  const activeFile = files.find((file) => file.path === activePath) ?? files[0] ?? null;
+  const questionCount = run?.quiz?.questions.length ?? 0;
 
-  const totalAdditions = files.reduce((sum, file) => sum + file.additions, 0);
-  const totalDeletions = files.reduce((sum, file) => sum + file.deletions, 0);
+  if (!run) {
+    return null;
+  }
 
   return (
-    <div className="grid gap-4">
-      <header className="rounded-md border border-border bg-card p-4">
-        <div className="typography-micro uppercase tracking-[0.18em] text-muted-foreground">
-          Don't know what you changed?
+    <section className="rounded-md border border-border bg-card">
+      <header className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-5 py-4">
+        <div>
+          <div className="typography-ui-label text-muted-foreground">Don't know what you changed?</div>
+          <h2 className="mt-1 text-xl font-semibold tracking-normal text-foreground">
+            Review the diff before you defend it
+          </h2>
+          <p className="mt-1 typography-micro text-muted-foreground">
+            Karen will ask you {questionCount || 'a few'} question{questionCount === 1 ? '' : 's'} about this diff.
+            One miss and the sandbox gets reset. The real repo stays clean.
+          </p>
         </div>
-        <h1 className="mt-2 text-2xl font-semibold tracking-normal text-foreground">
-          Karen wants you to read it first
-        </h1>
-        <p className="mt-2 typography-body text-muted-foreground">
-          This patch is sitting in a sandbox. Skim every file — Karen quizzes you on the diff before anything
-          touches the real repo.
-        </p>
-        <div className="mt-3 flex flex-wrap items-center gap-3">
-          <span className="rounded-sm bg-muted px-2 py-1 typography-micro text-muted-foreground">
-            {files.length} file{files.length === 1 ? '' : 's'}
+        {run.promptScore !== null && run.promptScore !== undefined ? (
+          <span className="rounded-sm bg-muted px-2 py-1 typography-micro font-medium text-foreground">
+            verdict {run.promptScore}/100
           </span>
-          <span className="rounded-sm bg-[var(--status-success)]/15 px-2 py-1 typography-micro font-medium text-[var(--status-success)]">
-            +{totalAdditions}
-          </span>
-          <span className="rounded-sm bg-[var(--status-error)]/15 px-2 py-1 typography-micro font-medium text-[var(--status-error)]">
-            -{totalDeletions}
-          </span>
-          {run.diffSource ? (
-            <span className="rounded-sm bg-background px-2 py-1 typography-micro text-muted-foreground">
-              diff source: {run.diffSource}
-            </span>
-          ) : null}
-        </div>
-        {run.diffNote ? (
-          <div className="mt-3 rounded-md border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 px-3 py-2 typography-micro text-[var(--status-warning)]">
-            Note: {run.diffNote}
-          </div>
         ) : null}
       </header>
 
-      <div className="overflow-hidden rounded-md border border-border bg-card">
-        {files.length > 0 ? (
-          files.map((file) => (
-            <FileRow
-              key={file.path}
-              file={file}
-              expanded={Boolean(expanded[file.path])}
-              onToggle={() => {
-                setExpanded((current) => ({ ...current, [file.path]: !current[file.path] }));
-              }}
-            />
-          ))
-        ) : (
-          <div className="p-4 typography-body text-muted-foreground">
-            Karen did not return a diff for this run.
+      <div className="grid gap-0 lg:grid-cols-[minmax(220px,0.28fr)_minmax(0,0.72fr)]">
+        <aside className="border-b border-border lg:border-b-0 lg:border-r">
+          <div className="px-4 py-3 typography-micro uppercase tracking-[0.18em] text-muted-foreground">
+            Files in scope ({files.length})
           </div>
-        )}
+          <ul className="max-h-72 overflow-auto lg:max-h-[420px]">
+            {files.length > 0 ? files.map((file) => {
+              const isActive = activeFile?.path === file.path;
+              return (
+                <li key={file.path}>
+                  <button
+                    type="button"
+                    onClick={() => setActivePath(file.path)}
+                    className={cn(
+                      'flex w-full items-start gap-2 px-4 py-2 text-left typography-micro hover:bg-muted/50',
+                      isActive ? 'bg-muted/60 text-foreground' : 'text-foreground/80',
+                    )}
+                    aria-pressed={isActive}
+                  >
+                    <RiFileTextLine className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+                    <span className="flex-1 break-words font-mono">{file.path}</span>
+                    <span className="shrink-0 font-mono text-[10px]">
+                      <span className="text-[var(--status-success)]">+{file.additions}</span>
+                      <span className="text-muted-foreground">/</span>
+                      <span className="text-[var(--status-error)]">-{file.deletions}</span>
+                    </span>
+                  </button>
+                </li>
+              );
+            }) : (
+              <li className="px-4 py-3 typography-micro text-muted-foreground">
+                Karen did not return a diff for this run.
+              </li>
+            )}
+          </ul>
+        </aside>
+
+        <div className="min-h-[280px] overflow-hidden">
+          <div className="border-b border-border bg-background/60 px-4 py-2 typography-micro text-muted-foreground">
+            {activeFile ? <span className="font-mono">{activeFile.path}</span> : 'No file selected'}
+          </div>
+          <pre className="max-h-72 overflow-auto bg-background/40 px-3 py-3 font-mono text-[12px] leading-5 lg:max-h-[420px]">
+            {activeFile && activeFile.lines.length > 0
+              ? activeFile.lines.map((line, index) => renderDiffLine(line, index))
+              : <div className="text-muted-foreground">No diff lines for this file.</div>}
+          </pre>
+        </div>
       </div>
 
-      <div
-        className={cn(
-          'flex flex-wrap items-center gap-3 rounded-md border border-[var(--status-warning)]/40',
-          'bg-[var(--status-warning)]/10 px-3 py-2',
-        )}
-      >
-        <RiAlertLine className="size-4 shrink-0 text-[var(--status-warning)]" />
-        <p className="min-w-0 flex-1 typography-micro text-[var(--status-warning)]">
-          Karen will ask you 5 questions about this diff. Wrong = git reset --hard.
-        </p>
-      </div>
-
-      <div className="flex flex-wrap justify-end gap-2">
-        <Button
+      <footer className="flex flex-col gap-3 border-t border-border px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 typography-micro text-foreground">
+          <RiAlertLine className="mt-0.5 size-4 text-amber-500" />
+          <span>
+            Karen will ask you {questionCount || 'a few'} question{questionCount === 1 ? '' : 's'} about this diff.
+            Wrong = <code className="font-mono">git reset --hard</code>.
+          </span>
+        </div>
+        <button
           type="button"
-          size="lg"
           onClick={onStartQuiz}
-          className="bg-foreground text-background hover:opacity-90"
+          disabled={questionCount === 0}
+          className={cn(
+            'inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 typography-ui-label font-semibold text-primary-foreground',
+            'hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50',
+          )}
         >
-          Take the read check →
-        </Button>
-      </div>
-    </div>
+          Take the read check
+          <RiArrowRightLine className="size-4" />
+        </button>
+      </footer>
+    </section>
   );
 };
 
