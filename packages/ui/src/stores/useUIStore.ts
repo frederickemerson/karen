@@ -7,7 +7,7 @@ import type { ShortcutCombo } from '@/lib/shortcuts';
 import { DEFAULT_MONO_FONT, DEFAULT_UI_FONT, type MonoFontOption, type UiFontOption } from '@/lib/fontOptions';
 import { getStoredMobileKeyboardMode, type MobileKeyboardMode } from '@/lib/mobileKeyboardMode';
 
-export type MainTab = 'chat' | 'plan' | 'git' | 'diff' | 'terminal' | 'files';
+export type MainTab = 'chat' | 'plan' | 'git' | 'diff' | 'terminal' | 'files' | 'promptcourt';
 export type RightSidebarTab = 'git' | 'files' | 'context';
 export type ContextPanelMode = 'diff' | 'file' | 'context' | 'plan' | 'chat' | 'preview';
 export type MermaidRenderingMode = 'svg' | 'ascii';

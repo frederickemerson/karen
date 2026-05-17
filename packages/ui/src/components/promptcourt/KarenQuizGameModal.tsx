@@ -236,7 +236,7 @@ export const KarenQuizGameModal: React.FC<KarenQuizModalProps> = ({
   onPassed,
   onFailed,
 }) => {
-  const [stage, setStage] = React.useState<'intro' | 'question' | 'wrong' | 'passed'>('intro');
+  const [stage, setStage] = React.useState<'intro' | 'question' | 'reset' | 'wrong' | 'passed'>('intro');
   const [questionIndex, setQuestionIndex] = React.useState(0);
   const [answerState, setAnswerState] = React.useState<AnswerState>({
     selected: null,
@@ -325,9 +325,15 @@ export const KarenQuizGameModal: React.FC<KarenQuizModalProps> = ({
 
       if (!result.correct) {
         setWrongQuestion(question);
-        setStage('wrong');
+        // Briefly show the full-screen GIT RESET --HARD card (matches the
+        // vision frame: red sandbox-deleted screen), then drop into the
+        // existing review panel so the user sees the correct answer + why.
+        setStage('reset');
         void playKarenEventAudio('quiz-fail');
         if (onFailed) onFailed(run, question);
+        window.setTimeout(() => {
+          setStage('wrong');
+        }, 3500);
         return;
       }
 
@@ -477,15 +483,35 @@ export const KarenQuizGameModal: React.FC<KarenQuizModalProps> = ({
               />
             ) : null}
 
+
             {stage === 'passed' ? (
               <PassedPanel run={run} onClose={handleClose} />
             ) : null}
           </section>
         </div>
       </div>
+      {stage === 'reset' ? <GitResetCard /> : null}
     </div>
   );
 };
+
+const GitResetCard: React.FC = () => (
+  <div
+    className="absolute inset-0 z-[10] flex flex-col items-center justify-center bg-rose-600 px-8 py-10 text-white"
+    role="alert"
+    aria-live="assertive"
+  >
+    <div className="rounded-sm bg-black/30 px-3 py-1 font-mono text-[11px] uppercase tracking-[0.28em] text-white">
+      Redo ur work
+    </div>
+    <h1 className="mt-8 text-center font-mono text-5xl font-black uppercase tracking-tight text-white sm:text-7xl md:text-8xl">
+      git reset --hard
+    </h1>
+    <p className="mt-8 max-w-3xl text-center text-2xl font-semibold leading-tight text-white sm:text-3xl">
+      Sandbox deleted. Real repo stays clean.
+    </p>
+  </div>
+);
 
 const IntroPanel: React.FC<{
   run: KarenQuizRun;

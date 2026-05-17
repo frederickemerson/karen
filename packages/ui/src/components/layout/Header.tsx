@@ -16,7 +16,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { SortableTabsStrip, type SortableTabsStripItem } from '@/components/ui/sortable-tabs-strip';
 
-import { RiArrowLeftSLine, RiChat4Line, RiChatNewLine, RiCheckLine, RiCloseLine, RiCommandLine, RiFileTextLine, RiFolder6Line, RiGitBranchLine, RiGithubFill, RiLayoutLeftLine, RiLayoutRightLine, RiPictureInPicture2Line, RiPlayListAddLine, RiRefreshLine, RiServerLine, RiStackLine, RiTerminalBoxLine, RiTimerLine, RiAlertLine, RiWindowLine, type RemixiconComponentType } from '@remixicon/react';
+import { RiArrowLeftSLine, RiAuctionLine, RiChat4Line, RiChatNewLine, RiCheckLine, RiCloseLine, RiCommandLine, RiFileTextLine, RiFolder6Line, RiGitBranchLine, RiGithubFill, RiLayoutLeftLine, RiLayoutRightLine, RiPictureInPicture2Line, RiPlayListAddLine, RiRefreshLine, RiServerLine, RiStackLine, RiTerminalBoxLine, RiTimerLine, RiAlertLine, RiWindowLine, type RemixiconComponentType } from '@remixicon/react';
 import { DiffIcon } from '@/components/icons/DiffIcon';
 import { useUIStore, type MainTab } from '@/stores/useUIStore';
 import { useConfigStore } from '@/stores/useConfigStore';
@@ -1511,6 +1511,7 @@ export const Header: React.FC<HeaderProps> = ({
       }
 
       base.push(
+        { id: 'promptcourt', label: 'PromptCourt', icon: RiAuctionLine },
         { id: 'diff', label: t('layout.mainTab.diff'), icon: 'diff' },
         { id: 'files', label: t('layout.mainTab.files'), icon: RiFolder6Line },
         { id: 'terminal', label: t('layout.mainTab.terminal'), icon: RiTerminalBoxLine },
@@ -1752,6 +1753,21 @@ export const Header: React.FC<HeaderProps> = ({
 
   const desktopSidebarActions = (
     <>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            aria-label="Open PromptCourt"
+            onClick={() => setActiveMainTab(activeMainTab === 'promptcourt' ? 'chat' : 'promptcourt')}
+            className={cn(desktopHeaderIconButtonClass, activeMainTab === 'promptcourt' && 'bg-[var(--interactive-hover)]')}
+          >
+            <RiAuctionLine className="h-[18px] w-[18px]" />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent>
+          <p>PromptCourt</p>
+        </TooltipContent>
+      </Tooltip>
       {showPlanTab && (
         <Tooltip>
           <TooltipTrigger asChild>

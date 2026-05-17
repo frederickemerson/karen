@@ -28,6 +28,7 @@ import { lazyWithChunkRecovery } from '@/lib/chunkLoadRecovery';
 import { ChatView } from '@/components/views/ChatView';
 
 // Heavy views loaded on-demand to reduce initial bundle parse time.
+const PromptCourtPanel = lazyWithChunkRecovery(() => import('@/components/promptcourt/PromptCourtPanel').then(m => ({ default: m.PromptCourtPanel })));
 const PlanView = lazyWithChunkRecovery(() => import('@/components/views/PlanView').then(m => ({ default: m.PlanView })));
 const GitView = lazyWithChunkRecovery(() => import('@/components/views/GitView').then(m => ({ default: m.GitView })));
 const DiffView = lazyWithChunkRecovery(() => import('@/components/views/DiffView').then(m => ({ default: m.DiffView })));
@@ -370,6 +371,8 @@ export const MainLayout: React.FC = () => {
                 return <React.Suspense fallback={null}><TerminalView /></React.Suspense>;
             case 'files':
                 return <React.Suspense fallback={null}><FilesView /></React.Suspense>;
+            case 'promptcourt':
+                return <React.Suspense fallback={null}><PromptCourtPanel /></React.Suspense>;
             default:
                 return null;
         }
