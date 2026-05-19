@@ -10,13 +10,15 @@
 #   KAREN_HOME         where to clone the source (default: $HOME/.karen)
 #   KAREN_INSTALL_DIR  where to write the `karen` launcher (default: $HOME/.local/bin)
 #   KAREN_SKIP_BUN     set to 1 to skip auto-installing Bun
+#   KAREN_SKIP_GUI_BUILD set to 1 to skip pre-building the GUI (build happens on first /gui)
 #
 # What this does:
 #   1. Verifies git and Node 20+ are on PATH.
 #   2. Installs Bun via the official installer if missing.
 #   3. Clones (or updates) the Karen source at $KAREN_HOME.
 #   4. Runs `bun install` and writes the `karen` launcher into $KAREN_INSTALL_DIR.
-#   5. Prints PATH advice if the install dir is not on PATH.
+#   5. Pre-builds the Karen GUI so `/gui` opens fast.
+#   6. Prints PATH advice if the install dir is not on PATH.
 
 set -eu
 
@@ -96,6 +98,22 @@ step "writing karen launcher to $KAREN_INSTALL_DIR"
 KAREN_INSTALL_DIR="$KAREN_INSTALL_DIR" \
   node "$KAREN_HOME/scripts/install-karen.mjs" install --dir "$KAREN_INSTALL_DIR" \
   || die "launcher install failed"
+
+# --- pre-build the GUI ------------------------------------------------------
+# vite build for packages/web takes ~30s and needs ~8GB heap. Doing it now
+# means the first /gui inside Karen opens straight away instead of hanging
+# for half a minute on a 503 page. Non-fatal on failure — the watcher will
+# rebuild on demand.
+if [ "${KAREN_SKIP_GUI_BUILD:-0}" = "1" ]; then
+  warn "skipping GUI build (KAREN_SKIP_GUI_BUILD=1) — /gui will build on first use"
+else
+  step "pre-building the Karen GUI (one-time, ~30s)"
+  if ( cd "$KAREN_HOME" && bun run --cwd packages/web build ); then
+    ok "GUI built"
+  else
+    warn "GUI build failed — /gui will build on first use"
+  fi
+fi
 
 # --- PATH advice ------------------------------------------------------------
 case ":$PATH:" in

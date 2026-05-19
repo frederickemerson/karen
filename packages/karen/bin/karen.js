@@ -1569,6 +1569,16 @@ const runUpdate = async () => {
     line(color('Launcher refresh failed. Source and deps are updated.', 'amber'));
   }
 
+  if (envEnabled('KAREN_SKIP_GUI_BUILD', false)) {
+    line(color('Skipping GUI rebuild (KAREN_SKIP_GUI_BUILD=1).', 'gray'));
+  } else {
+    line(color('Rebuilding the Karen GUI (~30s).', 'gray'));
+    const build = spawnSync('bun', ['run', '--cwd', 'packages/web', 'build'], { cwd: root, stdio: 'inherit' });
+    if (build.status !== 0) {
+      line(color('GUI build failed. /gui will fall back to building on first use.', 'amber'));
+    }
+  }
+
   line(color('Karen updated. Quit and restart to load the new version.', 'green'));
 };
 
