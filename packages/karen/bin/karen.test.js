@@ -332,6 +332,30 @@ describe('Karen OpenCode TUI interception heuristics', () => {
   });
 });
 
+describe('Karen isolation hardening', () => {
+  test('rejects symlinks that escape the isolated worktree root', () => {
+    const root = makeTempProject();
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'karen-outside-'));
+    tempDirs.push(outside);
+    const safeTarget = path.join(root, 'safe-target.txt');
+    fs.writeFileSync(safeTarget, 'inside');
+
+    fs.symlinkSync(safeTarget, path.join(root, 'safe-link'));
+    expect(() => __karenTest.scanForUnsafeSymlinks(root)).not.toThrow();
+
+    fs.symlinkSync(outside, path.join(root, 'unsafe-link'));
+    expect(() => __karenTest.scanForUnsafeSymlinks(root)).toThrow(/Unsafe symlink escapes Karen worktree/);
+  });
+
+  test('keeps raw OpenCode passthrough behind an explicit local escape hatch', () => {
+    delete process.env.KAREN_ALLOW_RAW_OPENCODE;
+    expect(__karenTest.rawOpenCodeAllowed()).toBe(false);
+
+    process.env.KAREN_ALLOW_RAW_OPENCODE = '1';
+    expect(__karenTest.rawOpenCodeAllowed()).toBe(true);
+  });
+});
+
 describe('Karen OpenCode hook adapter boundary', () => {
   test('detects upstream prompt hook registration APIs', () => {
     const support = detectOpenCodeHookSupport({

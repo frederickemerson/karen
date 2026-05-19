@@ -10,7 +10,7 @@ Karen's web scoreboard. The CLI is the product; this surface renders the public 
 
 ## Agent TL;DR
 
-- 23 components/modules. `KarenCloudProvider` wraps the tree with Convex + Clerk; `PromptCourtPage` is the live profile page; `KarenLandingPage` is the router shell for the 4-page landing flow.
+- 34 components/modules plus one component test. `KarenCloudProvider` wraps the tree with Convex + Clerk; `PromptCourtPage` is the live profile page; `KarenLandingPage` is the router shell for the landing/profile/auth flow.
 - All Karen color intent comes from [`../../../../../docs/karen/03-design.md`](../../../../../docs/karen/03-design.md). Use the inherited theme tokens; do not hardcode hex values.
 - Live data sources: Convex queries via `useQuery` from `convex/react`, plus the inherited `/api/promptcourt/*` HTTP routes for run streams. Never derive verdicts client-side.
 - This surface inherits the OpenChamber app shell, theming, and primitives ([Base UI](https://base-ui.com/), Tailwind v4, the typography helpers in `packages/ui/src/lib/typography.ts`).
@@ -38,10 +38,19 @@ Make Karen's records public, glanceable, and arcade-shaped. Convert PromptCourt'
 - [`ProofProfileCard.tsx`](ProofProfileCard.tsx) - single-card public profile summary, used standalone and inside the live page.
 - [`DeleteOrDefend.tsx`](DeleteOrDefend.tsx) - interactive challenge mini-game where users decide to keep or roll back a generated diff under time pressure.
 - [`GrandmaVoicePanel.tsx`](GrandmaVoicePanel.tsx) - settings panel for the Karen voice (mood, ElevenLabs voice id, server-side TTS proxy info, preview). Persists settings to `localStorage` under `KAREN_VOICE_STORAGE_KEY`.
+- [`KarenVoicePage.tsx`](KarenVoicePage.tsx) - standalone browser voice test page. Uses the Convex voice HTTP proxy and the shared speaker control to preview configured voices.
+- [`PublicProfileView.tsx`](PublicProfileView.tsx) - public profile route view. Renders shareable user stats, badges, recent sessions, and posts from Convex or fallback data.
+- [`SpeakerButton.tsx`](SpeakerButton.tsx) - reusable voice playback button. Calls `/karen/voice/synthesize` through the configured Convex HTTP URL and falls back gracefully when voice is unavailable.
+- [`LiveLeaderboardShowcase.test.tsx`](LiveLeaderboardShowcase.test.tsx) - component test for leaderboard rendering and ordering.
 - [`landing/Home.tsx`](landing/Home.tsx) - home route hero page with the confrontational pitch and mascot.
 - [`landing/HowItWorks.tsx`](landing/HowItWorks.tsx) - route showing the pipeline strip, prompt judge examples, and commit-interrupt quiz.
 - [`landing/Scoreboard.tsx`](landing/Scoreboard.tsx) - route combining `LiveLeaderboardShowcase`, `BadPromptGraveyard`, and `KarenShameTweetWall`.
 - [`landing/Install.tsx`](landing/Install.tsx) - route with install commands and CTA.
+- [`landing/Link.tsx`](landing/Link.tsx) - device-link approval route for the Karen CLI login flow.
+- [`landing/MyProfile.tsx`](landing/MyProfile.tsx) - authenticated user's profile route wrapper.
+- [`landing/SignIn.tsx`](landing/SignIn.tsx) - Clerk sign-in route wrapper.
+- [`landing/SignUp.tsx`](landing/SignUp.tsx) - Clerk sign-up route wrapper.
+- [`landing/UserProfile.tsx`](landing/UserProfile.tsx) - public username profile route wrapper.
 - [`landing/KarenPipelineStrip.tsx`](landing/KarenPipelineStrip.tsx) - concise visual flow from prompt to verdict.
 - [`landing/KarenCommitInterrupt.tsx`](landing/KarenCommitInterrupt.tsx) - TaskMaster commit frame and quiz handoff.
 - [`landing/KarenShameTweetWall.tsx`](landing/KarenShameTweetWall.tsx) - mock `@karen-code` X-style shame feed for landing storytelling.

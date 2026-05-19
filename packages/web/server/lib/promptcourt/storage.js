@@ -21,12 +21,28 @@ const emptyState = () => ({
   rewards: {},
 });
 
+const assertNotSymlink = (targetPath) => {
+  try {
+    const stat = fs.lstatSync(targetPath);
+    if (stat.isSymbolicLink()) {
+      throw new Error(`Refusing to use symlinked PromptCourt path: ${targetPath}`);
+    }
+  } catch (error) {
+    if (error?.code === 'ENOENT') return;
+    throw error;
+  }
+};
+
 const ensureDir = (targetPath) => {
-  fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+  const dir = path.dirname(targetPath);
+  assertNotSymlink(dir);
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  try { fs.chmodSync(dir, 0o700); } catch {}
 };
 
 const safeRead = (targetPath) => {
   try {
+    assertNotSymlink(targetPath);
     const raw = fs.readFileSync(targetPath, 'utf8');
     const parsed = JSON.parse(raw);
     if (parsed && typeof parsed === 'object') {
@@ -46,10 +62,14 @@ const safeRead = (targetPath) => {
 };
 
 const atomicWrite = (targetPath, value) => {
+  assertNotSymlink(targetPath);
   ensureDir(targetPath);
   const tmpPath = `${targetPath}.tmp`;
-  fs.writeFileSync(tmpPath, JSON.stringify(value, null, 2));
+  assertNotSymlink(tmpPath);
+  fs.writeFileSync(tmpPath, JSON.stringify(value, null, 2), { mode: 0o600 });
+  try { fs.chmodSync(tmpPath, 0o600); } catch {}
   fs.renameSync(tmpPath, targetPath);
+  try { fs.chmodSync(targetPath, 0o600); } catch {}
 };
 
 const mutateLocks = new Map();
@@ -151,14 +171,14 @@ const appendRunEvent = (state, {
   status,
   label,
   details,
-}) => {
+}, { policy = getPromptCourtPrivacyPolicy() } = {}) => {
   const event = {
     id: `evt_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
     sessionId,
     username: normalizeUsername(username),
     status,
-    label,
-    details,
+    label: redactPublicText(label, 180, { policy }),
+    details: redactPublicText(details, 360, { policy }),
     createdAt: Date.now(),
   };
   state.runEvents.push(event);
@@ -243,7 +263,7 @@ export const createPromptCourtStore = ({
           status: 'blocked',
           label: `Blocked ${evaluation.score}/100 prompt`,
           details: redactedReasons.slice(0, 4).join(' · '),
-        });
+        }, { policy: privacyPolicy });
         const post = sanitizePublicPost({
           id: `post_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
           sessionId: session.id,
@@ -263,7 +283,7 @@ export const createPromptCourtStore = ({
           status: 'synced',
           label: 'Blocked prompt mirrored to Convex.',
           details: result.post?.title,
-        }));
+        }, { policy: privacyPolicy }));
       }
       return result;
     },
@@ -298,7 +318,7 @@ export const createPromptCourtStore = ({
           status: 'running',
           label: 'Prompt approved. Karen is running the agent.',
           details: `${evaluation.score}/100 prompt score`,
-        });
+        }, { policy: privacyPolicy });
         return session;
       });
       cloudSync.recordApprovedPrompt?.({ session });
@@ -309,7 +329,7 @@ export const createPromptCourtStore = ({
           status: 'synced',
           label: 'Approved run mirrored to Convex.',
           details: session.status,
-        }));
+        }, { policy: privacyPolicy }));
       }
       return session;
     },
@@ -328,7 +348,7 @@ export const createPromptCourtStore = ({
           status: quizPassed ? 'quiz_passed' : 'rollback',
           label: quizPassed ? 'Quiz passed. Patch is eligible for promotion.' : 'Quiz failed. Generated code was reset.',
           details: session.changedFiles.length > 0 ? session.changedFiles.slice(0, 4).join(', ') : 'No changed files recorded',
-        });
+        }, { policy: privacyPolicy });
         let post = null;
         if (publicPost) {
           post = sanitizePublicPost({
@@ -352,12 +372,12 @@ export const createPromptCourtStore = ({
           status: 'synced',
           label: 'Quiz result mirrored to Convex.',
           details: result.session.status,
-        }));
+        }, { policy: privacyPolicy }));
       }
       return result.session;
     },
     recordRunEvent(event) {
-      return mutate((state) => appendRunEvent(state, event));
+      return mutate((state) => appendRunEvent(state, event, { policy: privacyPolicy }));
     },
     getRunEvents({ username = null, sinceId = null, limit = 50 } = {}) {
       const state = read();

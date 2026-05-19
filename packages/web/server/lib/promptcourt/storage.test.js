@@ -271,6 +271,54 @@ describe('promptcourt storage', () => {
     expect(approved.reasons[0]).not.toContain('user:pass@example.com');
   });
 
+  it('redacts run event labels and details at the storage boundary', () => {
+    const store = createStore();
+    const event = store.recordRunEvent({
+      username: 'Event Security',
+      status: 'queued',
+      label: 'Queued OPENAI_API_KEY=sk-abcdefghijklmnopqrstuvwxyz',
+      details: 'Contact test@example.com with token=ghp_abcdefghijklmnopqrstuvwxyz',
+    });
+
+    expect(event.label).toBe('Queued OPENAI_API_KEY=[redacted]');
+    expect(event.details).toBe('Contact [redacted:email] with token=[redacted]');
+  });
+
+  it('writes local PromptCourt state with private filesystem permissions', () => {
+    const openchamberDataDir = createTempDir();
+    const store = createPromptCourtStore({ openchamberDataDir, cloudSync: { enabled: false } });
+    store.recordRunEvent({
+      username: 'Mode Tester',
+      status: 'queued',
+      label: 'Queued',
+      details: 'safe',
+    });
+
+    const dirMode = fs.statSync(openchamberDataDir).mode & 0o777;
+    const fileMode = fs.statSync(path.join(openchamberDataDir, 'promptcourt.json')).mode & 0o777;
+    expect(dirMode).toBe(0o700);
+    expect(fileMode).toBe(0o600);
+  });
+
+  it('refuses symlinked PromptCourt state paths', () => {
+    const realDir = createTempDir();
+    const linkDir = `${realDir}-link`;
+    tempDirs.push(linkDir);
+    fs.symlinkSync(realDir, linkDir);
+
+    const store = createPromptCourtStore({
+      openchamberDataDir: linkDir,
+      cloudSync: { enabled: false },
+    });
+
+    expect(() => store.recordRunEvent({
+      username: 'Symlink',
+      status: 'queued',
+      label: 'Queued',
+      details: 'safe',
+    })).toThrow(/Refusing to use symlinked PromptCourt path/);
+  });
+
   it('recovers from corrupt local state with an empty default profile', () => {
     const openchamberDataDir = createTempDir();
     fs.writeFileSync(path.join(openchamberDataDir, 'promptcourt.json'), '{not json');

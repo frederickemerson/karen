@@ -14,7 +14,7 @@ import { redactPublicText } from '../../web/server/lib/promptcourt/privacy.js';
 import { createPromptCourtStore } from '../../web/server/lib/promptcourt/storage.js';
 import { analyzeDiffImpact, parseDiff } from '../../web/server/lib/promptcourt/quiz-analyzer.js';
 import { buildQuiz } from '../../web/server/lib/promptcourt/quiz.js';
-import { installWorktreeCommitHooks, createCommitTokenFile } from '../../web/server/lib/opencode/git-commit-guard.js';
+import { installWorktreeCommitHooks, createCommitTokenFile, createKarenGitCommitGuardRuntime } from '../../web/server/lib/opencode/git-commit-guard.js';
 import {
   loadAuth,
   saveAuth,
@@ -80,6 +80,12 @@ const configHome = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.conf
 const stateHome = process.env.XDG_STATE_HOME || path.join(os.homedir(), '.local', 'state');
 const openchamberDataDir = path.join(configHome, 'openchamber');
 const store = createPromptCourtStore({ openchamberDataDir });
+const karenGitCommitGuardRuntime = createKarenGitCommitGuardRuntime({
+  fs,
+  os,
+  path,
+  processLike: process,
+});
 
 const expandHome = (value) => {
   if (!value || typeof value !== 'string') return null;
@@ -490,6 +496,11 @@ const getGitDiff = (cwd = process.cwd(), args = ['diff', '--binary', '--no-color
   return result.status === 0 ? result.stdout : '';
 };
 
+const getGitHead = (cwd) => {
+  const result = run('git', ['rev-parse', 'HEAD'], { cwd });
+  return result.status === 0 ? result.stdout.trim() : '';
+};
+
 const applyPatch = (patch, args, cwd = process.cwd()) => {
   if (!patch.trim()) return { status: 0, stderr: '' };
   return spawnSync('git', ['apply', '--whitespace=nowarn', ...args], {
@@ -506,10 +517,58 @@ const getUntrackedFiles = (cwd) => {
   return result.stdout.split('\0').map((entry) => entry.trim()).filter(Boolean);
 };
 
+const isPathInside = (candidate, parent) => {
+  const relative = path.relative(parent, candidate);
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+};
+
+const symlinkTargetPath = (linkPath) => {
+  const target = fs.readlinkSync(linkPath);
+  return path.isAbsolute(target) ? target : path.resolve(path.dirname(linkPath), target);
+};
+
+const assertSafeSymlink = (linkPath, rootPath) => {
+  const rootReal = fs.realpathSync(rootPath);
+  const target = symlinkTargetPath(linkPath);
+  let targetReal = target;
+  try {
+    targetReal = fs.realpathSync(target);
+  } catch {
+    targetReal = path.resolve(target);
+  }
+  if (!isPathInside(targetReal, rootReal)) {
+    throw new Error(`Unsafe symlink escapes Karen worktree: ${path.relative(rootPath, linkPath)} -> ${target}`);
+  }
+};
+
+const scanForUnsafeSymlinks = (rootPath) => {
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === '.git') continue;
+      const fullPath = path.join(dir, entry.name);
+      const stat = fs.lstatSync(fullPath);
+      if (stat.isSymbolicLink()) {
+        assertSafeSymlink(fullPath, rootPath);
+        continue;
+      }
+      if (stat.isDirectory()) walk(fullPath);
+    }
+  };
+  walk(rootPath);
+};
+
+const assertSafeUntrackedSource = (sourceRoot, relativePath) => {
+  const source = path.join(sourceRoot, relativePath);
+  const stat = fs.lstatSync(source);
+  if (!stat.isSymbolicLink()) return;
+  assertSafeSymlink(source, sourceRoot);
+};
+
 const copyFileInto = (sourceRoot, targetRoot, relativePath) => {
   const source = path.join(sourceRoot, relativePath);
   const target = path.join(targetRoot, relativePath);
   if (!fs.existsSync(source)) return;
+  assertSafeUntrackedSource(sourceRoot, relativePath);
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.cpSync(source, target, {
     recursive: true,
@@ -721,8 +780,8 @@ const maybeScreamAtLongPrompt = (prompt) => {
 const printOpenCodeCommands = () => {
   line(color('OpenCode passthrough commands', 'cyan'));
   line('  /tui [project]          start guarded OpenCode TUI with Karen prompt interception');
-  line('  /tui-raw [project]      start raw OpenCode TUI without interception');
-  line('  /run <message>          run OpenCode without the Karen prompt gate');
+  line('  /tui-raw [project]      start raw OpenCode TUI only when KAREN_ALLOW_RAW_OPENCODE=1');
+  line('  /run <message>          run a Karen-guarded prompt through the isolated worktree flow');
   line('  /attach <url>           attach to a running OpenCode server');
   line('  /serve [...args]        start a headless OpenCode server');
   line('  /web [...args]          start OpenCode web');
@@ -740,6 +799,13 @@ const printOpenCodeCommands = () => {
   line('  /acp [...args]          start ACP server');
 };
 
+const rawOpenCodeAllowed = () => envEnabled('KAREN_ALLOW_RAW_OPENCODE', false);
+
+const refuseRawOpenCode = (command) => {
+  line(color(`${command} is disabled by default because it bypasses PromptCourt and worktree isolation.`, 'red'));
+  line(color('Set KAREN_ALLOW_RAW_OPENCODE=1 for an explicit local escape hatch.', 'gray'));
+};
+
 const proxyOpencode = (args, options = {}) => new Promise((resolve) => {
   const binary = resolveOpencodeBinary();
   if (!binary) {
@@ -747,7 +813,11 @@ const proxyOpencode = (args, options = {}) => new Promise((resolve) => {
     resolve(127);
     return;
   }
-  const child = spawn(binary, args, { cwd: options.cwd || process.cwd(), stdio: options.stdio || 'inherit' });
+  const child = spawn(binary, args, {
+    cwd: options.cwd || process.cwd(),
+    stdio: options.stdio || 'inherit',
+    env: options.env || process.env,
+  });
   child.on('exit', (code) => resolve(code ?? 0));
 });
 
@@ -1030,6 +1100,13 @@ const createIsolatedWorktree = () => timeSync('createIsolatedWorktree', () => {
     cleanupWorktree(repo.root, tempRoot, runtimeDir);
     return { ok: false, error: commitResult.stderr?.trim() || 'Failed to create isolated baseline.' };
   }
+  const baselineHead = getGitHead(tempRoot);
+  try {
+    scanForUnsafeSymlinks(tempRoot);
+  } catch (error) {
+    cleanupWorktree(repo.root, tempRoot, runtimeDir);
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
 
   return {
     ok: true,
@@ -1038,6 +1115,7 @@ const createIsolatedWorktree = () => timeSync('createIsolatedWorktree', () => {
     runCwd: path.join(tempRoot, repo.prefix),
     runtimeDir,
     commitToken,
+    baselineHead,
   };
 }, (result) => (result?.ok ? 'ok' : `failed: ${result?.error?.slice(0, 60) || 'unknown'}`));
 
@@ -1076,8 +1154,20 @@ const runAgent = async (prompt, session, outerRl = null) => {
     line(color(`Running OpenCode in isolated worktree: ${isolated.worktreePath}`, 'cyan'));
   }
   try {
-    await proxyOpencode(buildRunArgs(prompt), { cwd: isolated.runCwd });
+    const guarded = karenGitCommitGuardRuntime.buildGuardedEnv(process.env.PATH);
+    await proxyOpencode(buildRunArgs(prompt), {
+      cwd: isolated.runCwd,
+      env: {
+        ...process.env,
+        ...guarded.env,
+        PATH: guarded.PATH,
+      },
+    });
     try {
+      const currentHead = getGitHead(isolated.worktreePath);
+      if (isolated.baselineHead && currentHead && currentHead !== isolated.baselineHead) {
+        throw new Error('OpenCode changed the isolated worktree HEAD. Karen discarded the run instead of diffing against a moving baseline.');
+      }
       const generatedDiff = prepareGeneratedDiff(isolated.worktreePath);
       if (generatedDiff.trim()) {
         const summary = parseDiff(generatedDiff);
@@ -1298,8 +1388,8 @@ const printHelp = () => {
   line('  /setup           guided OpenCode provider/model setup');
   line('  /commands        list OpenCode commands Karen can proxy');
   line('  /tui [project]   guarded OpenCode TUI; Karen blocks weak entered prompts');
-  line('  /tui-raw [...]   raw OpenCode TUI without Karen interception');
-  line('  /run <message>   run OpenCode directly without Karen gating');
+  line('  /tui-raw [...]   raw OpenCode TUI only when KAREN_ALLOW_RAW_OPENCODE=1');
+  line('  /run <message>   run a guarded prompt through the isolated worktree flow');
   line('  /providers       open OpenCode provider/auth manager');
   line('  /models [id]     list OpenCode models');
   line('  /auth            alias for /providers');
@@ -1317,7 +1407,7 @@ const printHelp = () => {
   line('  /feed            show latest public shame records');
   line('  /profile         show your Karen profile');
   line('  /diff            show current git diff stat');
-  line('  /opencode ...    pass any command through to OpenCode');
+  line('  /opencode ...    raw OpenCode passthrough only when KAREN_ALLOW_RAW_OPENCODE=1');
   line('  /quit /exit /q   leave Karen');
 };
 
@@ -1610,8 +1700,15 @@ const handleCommand = async (raw, rl) => {
   else if (command === 'gui') await openKarenGui();
   else if (command === 'setup') await runSetupWizard(rl, { force: true });
   else if (command === 'tui') await proxyOpencodeTuiIntercept(rest);
-  else if (command === 'tui-raw') await proxyOpencode(rest);
-  else if (command === 'run') await proxyOpencode(['run', ...rest]);
+  else if (command === 'tui-raw') {
+    if (!rawOpenCodeAllowed()) refuseRawOpenCode('/tui-raw');
+    else await proxyOpencode(rest);
+  }
+  else if (command === 'run') {
+    const prompt = rest.join(' ').trim();
+    if (!prompt) line(color('Usage: /run <prompt>', 'amber'));
+    else await handlePrompt(prompt, { interactive: true });
+  }
   else if (command === 'providers' || command === 'auth') await proxyOpencode(['providers']);
   else if (command === 'models') await proxyOpencode(['models', ...rest]);
   else if (command === 'mcp') await proxyOpencode(['mcp', ...rest]);
@@ -1639,7 +1736,8 @@ const handleCommand = async (raw, rl) => {
     const stat = run('git', ['diff', '--stat']);
     line(stat.stdout || color('No diff.', 'green'));
   } else if (command === 'opencode' || command === 'oc') {
-    await proxyOpencode(rest);
+    if (!rawOpenCodeAllowed()) refuseRawOpenCode(`/${command}`);
+    else await proxyOpencode(rest);
   } else if (command === 'login') {
     const result = await runLoginFlow({ verbose: verboseAllowed() });
     if (result?.token) {
@@ -1905,6 +2003,9 @@ export const __karenTest = {
   analyzeDiffImpact,
   buildQuiz,
   classifyTuiContext,
+  assertSafeSymlink,
+  scanForUnsafeSymlinks,
+  rawOpenCodeAllowed,
   parseDiff,
   normalizeOpenCodeModel,
   shouldRunAgentForEvaluation,

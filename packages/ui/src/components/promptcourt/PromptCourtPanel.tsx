@@ -176,8 +176,7 @@ const KarenAuthBar: React.FC = () => {
 
 const CurrentUserBinder: React.FC = () => {
   const { isSignedIn, user } = useUser();
-  // Cast: api.karen.* may not be in generated types until codegen refreshes.
-  const upsertCurrentUser = useMutation((api as any).karen.upsertCurrentUser);
+  const upsertCurrentUser = useMutation(api.karen.upsertCurrentUser);
 
   React.useEffect(() => {
     if (!isSignedIn || !user) return;
@@ -257,9 +256,8 @@ const useLocalKarenData = (username: string) => {
 };
 
 const useCloudKarenData = (username: string) => {
-  const apiAny = api as any;
-  const overview = useQuery(apiAny.karen.overview) as PromptCourtOverview | undefined;
-  const profile = useQuery(apiAny.karen.profile, { username }) as PromptCourtProfile | undefined;
+  const overview = useQuery(api.karen.overview) as PromptCourtOverview | undefined;
+  const profile = useQuery(api.karen.profile, { username }) as PromptCourtProfile | undefined;
   return {
     overview: overview ?? null,
     profile: profile ?? null,
@@ -293,7 +291,7 @@ const Stat: React.FC<{ label: string; value: React.ReactNode; tone?: 'default' |
 
 export const PromptCourtPanel: React.FC = () => {
   // Stable viewer identity: localStorage seed + Clerk override when signed in.
-  const [viewerUsername, setViewerUsername] = React.useState<string>(() => getPromptCourtUsername());
+  const [viewerUsername] = React.useState<string>(() => getPromptCourtUsername());
 
   const { overview, profile, error, loading } = useKarenData(viewerUsername);
 

@@ -38,7 +38,9 @@ const PendingDeviceLinkSnapBack: React.FC = () => {
     if (location.pathname === '/link') return;
     if (typeof window === 'undefined') return;
     let pending: string | null = null;
-    try { pending = window.sessionStorage.getItem(PENDING_CODE_KEY); } catch {}
+    try { pending = window.sessionStorage.getItem(PENDING_CODE_KEY); } catch {
+      // Session storage can be unavailable in strict privacy modes.
+    }
     if (!pending) return;
     navigate(`/link?code=${encodeURIComponent(pending)}`, { replace: true });
   }, [isSignedIn, location.pathname, navigate]);

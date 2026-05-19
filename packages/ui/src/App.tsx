@@ -162,7 +162,9 @@ const isKarenLandingPath = (): boolean => {
   if (typeof window === 'undefined') {
     return false;
   }
-  return window.location.pathname === '/karen/landing' || window.location.pathname === '/karen-home';
+  return window.location.pathname === '/karen/landing'
+    || window.location.pathname.startsWith('/karen/landing/')
+    || window.location.pathname === '/karen-home';
 };
 
 // Public-facing deployment (e.g. Docker + ngrok). When set, the SPA only
@@ -843,7 +845,7 @@ function App({ apis }: AppProps) {
   if (isKarenLanding) {
     return (
       <ErrorBoundary>
-        <BrowserRouter>
+        <BrowserRouter basename={window.location.pathname.startsWith('/karen/landing') ? '/karen/landing' : undefined}>
           <KarenLandingPage />
         </BrowserRouter>
       </ErrorBoundary>

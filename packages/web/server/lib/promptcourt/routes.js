@@ -23,7 +23,7 @@ const getPromptCourtSessionToken = () => {
     promptCourtSessionToken = envToken.trim();
   } else {
     promptCourtSessionToken = crypto.randomBytes(32).toString('hex');
-    console.log(`[promptcourt] generated session token: ${promptCourtSessionToken}`);
+    console.log('[promptcourt] generated session token');
   }
   return promptCourtSessionToken;
 };
@@ -70,6 +70,17 @@ const requirePromptCourtSession = async (req, res, next) => {
     return next();
   }
   return res.status(401).json({ ok: false, error: 'unauthorized' });
+};
+
+const attachPromptCourtSessionCookie = (req, res, next) => {
+  const secure = req.secure || req.get('x-forwarded-proto') === 'https';
+  res.cookie('karen_promptcourt_session', getPromptCourtSessionToken(), {
+    httpOnly: true,
+    path: '/',
+    sameSite: 'lax',
+    secure,
+  });
+  next();
 };
 
 const parseCwdAllowList = () => {
@@ -219,10 +230,19 @@ export const registerPromptCourtRoutes = (app, {
   const store = createPromptCourtStore({ openchamberDataDir });
   const jsonParser = express.json({ limit: '50mb' });
   getPromptCourtSessionToken();
+  app.use('/karen', attachPromptCourtSessionCookie);
+  app.use('/karen-home', attachPromptCourtSessionCookie);
+  app.get('/api/promptcourt/session', attachPromptCourtSessionCookie, (_req, res) => {
+    res.json({ ok: true });
+  });
+  app.use('/api/promptcourt/evaluate', requirePromptCourtSession);
   app.use('/api/promptcourt/profile', requirePromptCourtSession);
   app.use('/api/promptcourt/feed', requirePromptCourtSession);
+  app.use('/api/promptcourt/overview', requirePromptCourtSession);
   app.use('/api/promptcourt/runs', requirePromptCourtSession);
+  app.use('/api/promptcourt/run', requirePromptCourtSession);
   app.use('/api/promptcourt/gui-runs', requirePromptCourtSession);
+  app.use('/api/promptcourt/replay', requirePromptCourtSession);
   registerGuiRunRoutes(app, { express, store });
   registerPromptCourtReplayVideoRoutes(app, { express, openchamberDataDir, store });
 
@@ -318,7 +338,7 @@ export const registerPromptCourtRoutes = (app, {
       username,
       status: 'queued',
       label: 'GUI submitted a guarded Karen run.',
-      details: prompt.slice(0, 120),
+      details: redactPublicText(prompt, 120),
     });
     const verdict = evaluatePromptCourtRun({ store, prompt, username });
 
@@ -361,7 +381,7 @@ export const registerPromptCourtRoutes = (app, {
     }
   });
 
-  app.post('/api/session/:sessionId/prompt_async', jsonParser, async (req, res) => {
+  app.post('/api/session/:sessionId/prompt_async', requirePromptCourtSession, jsonParser, async (req, res) => {
     const prompt = extractPromptText(req.body);
     const username = store.normalizeUsername(getUsernameFromRequest(req));
     const evaluation = evaluatePrompt(prompt);
