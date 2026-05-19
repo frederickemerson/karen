@@ -65,12 +65,17 @@ export const ensureRepoEnvLoaded = () => {
   }
 };
 
+// Fallback for fresh installs: the canonical Karen cloud deployment.
+// Env vars (CONVEX_HTTP_ACTIONS_URL, VITE_CONVEX_SITE_URL) still take precedence
+// for self-hosters and dev.
+const DEFAULT_CONVEX_BASE = 'https://beloved-alligator-699.convex.site';
+
 const CONVEX_BASE = () => {
   ensureRepoEnvLoaded();
   return (
     process.env.CONVEX_HTTP_ACTIONS_URL
     || process.env.VITE_CONVEX_SITE_URL
-    || ''
+    || DEFAULT_CONVEX_BASE
   ).replace(/\/+$/, '');
 };
 
