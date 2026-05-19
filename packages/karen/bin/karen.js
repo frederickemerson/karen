@@ -610,7 +610,7 @@ const VALID_OPENCODE_VERBS = new Set([
 const KAREN_BUILTIN_COMMANDS = new Set([
   'help', 'commands', 'gui', 'setup', 'audio', 'feed', 'profile', 'diff',
   'quit', 'exit', 'q', 'bye', 'login', 'logout', 'sorry', 'please',
-  'karen', 'git-gud', 'voice',
+  'karen', 'git-gud', 'voice', 'update', 'uninstall',
 ]);
 
 const drawShell = () => {
@@ -1311,6 +1311,8 @@ const printHelp = () => {
   line('  /voice           voice controls (sample | mute | unmute | voice <id> | reset | prompts on|off | usage)');
   line('  /login           link this device to a cloud profile (Clerk)');
   line('  /logout          forget the current cloud profile binding');
+  line('  /update          pull latest Karen source and refresh dependencies');
+  line('  /uninstall       remove the karen launcher (source clone stays)');
   line('  /sorry /please /karen   easter eggs');
   line('  /feed            show latest public shame records');
   line('  /profile         show your Karen profile');
@@ -1505,6 +1507,102 @@ const handleVoiceCommand = async (rest) => {
   line(color('Use `/voice prompts on` to also have her speak on every verdict.', 'gray'));
 };
 
+// Treat `root` as an end-user install when it matches $KAREN_HOME or ~/.karen.
+// Dev checkouts (e.g. ~/Documents/Projects/Karen) should never be auto-pulled
+// or uninstalled from inside Karen — those are managed by the developer.
+const isEndUserInstall = () => {
+  const home = path.resolve(os.homedir());
+  const defaultHome = path.join(home, '.karen');
+  const envHome = process.env.KAREN_HOME ? path.resolve(expandHome(process.env.KAREN_HOME)) : null;
+  const resolvedRoot = path.resolve(root);
+  return resolvedRoot === defaultHome || (envHome != null && resolvedRoot === envHome);
+};
+
+const runUpdate = async () => {
+  if (!isEndUserInstall()) {
+    line(color(`Karen will not run /update inside a dev checkout (${root}).`, 'amber'));
+    line(color('Use git directly here. /update is for installs under ~/.karen.', 'gray'));
+    return;
+  }
+
+  line(color('Karen is updating herself.', 'pink'));
+
+  const status = run('git', ['status', '--porcelain'], { cwd: root });
+  if (status.status !== 0) {
+    line(color('git is not happy in this checkout. /update aborted.', 'red'));
+    if (status.stderr) line(color(status.stderr.trim(), 'gray'));
+    return;
+  }
+  if ((status.stdout || '').trim()) {
+    line(color('Local changes detected. Karen will not stomp on them.', 'amber'));
+    line(color('Stash or discard them, then run /update again.', 'gray'));
+    return;
+  }
+
+  const beforeSha = run('git', ['rev-parse', '--short', 'HEAD'], { cwd: root }).stdout?.trim() || 'unknown';
+
+  const pull = spawnSync('git', ['pull', '--ff-only', '--quiet'], { cwd: root, stdio: 'inherit' });
+  if (pull.status !== 0) {
+    line(color('git pull failed. /update aborted.', 'red'));
+    return;
+  }
+
+  const afterSha = run('git', ['rev-parse', '--short', 'HEAD'], { cwd: root }).stdout?.trim() || 'unknown';
+  if (beforeSha === afterSha) {
+    line(color(`Already current at ${afterSha}.`, 'gray'));
+  } else {
+    line(color(`Source moved ${beforeSha} → ${afterSha}.`, 'cyan'));
+  }
+
+  line(color('Installing dependencies (bun install).', 'gray'));
+  const install = spawnSync('bun', ['install', '--silent'], { cwd: root, stdio: 'inherit' });
+  if (install.status !== 0) {
+    line(color('bun install failed. Source is updated; deps are not.', 'red'));
+    return;
+  }
+
+  const refresh = spawnSync('node', [path.join(root, 'scripts', 'install-karen.mjs'), 'install'], {
+    cwd: root,
+    stdio: 'inherit',
+  });
+  if (refresh.status !== 0) {
+    line(color('Launcher refresh failed. Source and deps are updated.', 'amber'));
+  }
+
+  line(color('Karen updated. Quit and restart to load the new version.', 'green'));
+};
+
+const runUninstall = async (rl) => {
+  if (!isEndUserInstall()) {
+    line(color(`Karen will not run /uninstall inside a dev checkout (${root}).`, 'amber'));
+    line(color('Use the install script directly: node scripts/install-karen.mjs uninstall.', 'gray'));
+    return true;
+  }
+
+  line(color('Karen will remove her launcher.', 'pink'));
+  line(color(`Source clone at ${root} will stay — delete it manually if you want a clean wipe.`, 'gray'));
+  const answer = (await rl.question(color('Proceed? [y/N] ', 'amber'))).trim().toLowerCase();
+  if (answer !== 'y' && answer !== 'yes') {
+    line(color('Karen stays. For now.', 'gray'));
+    return true;
+  }
+
+  const result = spawnSync('node', [path.join(root, 'scripts', 'install-karen.mjs'), 'uninstall'], {
+    cwd: root,
+    stdio: 'inherit',
+  });
+  if (result.status !== 0) {
+    line(color('Uninstall failed. Karen is still on PATH.', 'red'));
+    return true;
+  }
+
+  line(color('Launcher removed. To finish the wipe:', 'green'));
+  line(color(`  rm -rf ${root}`, 'gray'));
+  line(color(`  rm -rf ${openchamberDataDir}   # cloud auth, voice prefs, promptcourt`, 'gray'));
+  line(color('Karen is signing off.', 'pink'));
+  return false;
+};
+
 const handleCommand = async (raw, rl) => {
   const [command, ...rest] = raw.trim().slice(1).split(/\s+/);
   if (command === 'help') printHelp();
@@ -1556,6 +1654,11 @@ const handleCommand = async (raw, rl) => {
     clearAuth();
     line(color('Karen forgets you. For now.', 'gray'));
     void playAudioCue('logout', '', buildVoiceContext({ name: priorName }));
+  } else if (command === 'update') {
+    await runUpdate();
+  } else if (command === 'uninstall') {
+    const keepRunning = await runUninstall(rl);
+    if (keepRunning === false) return false;
   } else if (command === 'sorry') {
     line(color(sorryReply(), 'amber'));
   } else if (command === 'please') {
