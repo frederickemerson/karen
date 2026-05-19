@@ -58,13 +58,6 @@ const optionTone: Record<QuizOption['id'], string> = {
   D: 'border-[#22c55e] bg-[#22c55e] text-[#17130f] shadow-[5px_5px_0_#14532d]',
 };
 
-const codeLines = [
-  '- return allowSession(session)',
-  '+ if (isExpired(session)) return denySession()',
-  '+ auditTrail.record("session_rejected")',
-  '+ return allowSession(session)',
-];
-
 const clampCountdown = (value: number) => Math.max(0, Math.min(7, value));
 
 const useKahootMusic = (enabled: boolean) => {
@@ -233,6 +226,23 @@ export const DiffQuizShowcase: React.FC<{
             >
               {countdown}
             </motion.div>
+          </div>
+          <div className="mt-4 grid gap-2 font-mono text-xs sm:grid-cols-[1fr_auto_auto_auto] sm:items-center">
+            <div className="h-2 overflow-hidden rounded-full border border-[#2a241c] bg-[#f8f1e3]">
+              <div
+                className="h-full bg-[#b7332c]"
+                style={{ width: `${countdownRatio * 100}%` }}
+              />
+            </div>
+            <div>score {score}</div>
+            <div>streak {streak}</div>
+            <button
+              type="button"
+              className="justify-self-start underline-offset-4 hover:underline sm:justify-self-auto"
+              onClick={() => setSoundEnabled((enabled) => !enabled)}
+            >
+              sound {soundEnabled ? 'on' : 'off'}
+            </button>
           </div>
 
           <div className="mt-5 grid gap-3 sm:grid-cols-2">

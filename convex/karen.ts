@@ -1342,21 +1342,27 @@ export const ingestEvent = internalMutation({
     let resolvedUserId: any = args.authUserId ?? null;
     let resolvedClerkUserId: string | undefined = authedClerkUserId;
     let resolvedUsername: string | undefined;
+    let resolvedClerkOrgId: string | undefined;
 
     if (resolvedUserId) {
       const authedUser = await ctx.db.get(resolvedUserId);
       if (!authedUser) throw new Error('Authenticated user not found');
       resolvedUsername = (authedUser as any).username;
+      resolvedClerkUserId = (authedUser as any).clerkUserId ?? resolvedClerkUserId;
+      resolvedClerkOrgId = (authedUser as any).clerkOrgId;
     }
 
     const username = resolvedUsername ?? normalizeUsername(args.session.username);
-    const effectiveClerkUserId = resolvedClerkUserId ?? args.session.clerkUserId;
+    const effectiveClerkUserId = resolvedUserId
+      ? resolvedClerkUserId
+      : (resolvedClerkUserId ?? args.session.clerkUserId);
+    const effectiveClerkOrgId = resolvedUserId ? resolvedClerkOrgId : args.session.clerkOrgId;
     const userId = resolvedUserId
       ?? (effectiveClerkUserId
         ? await ensureUser(ctx, {
           username,
           clerkUserId: effectiveClerkUserId,
-          clerkOrgId: args.session.clerkOrgId,
+          clerkOrgId: effectiveClerkOrgId,
           displayName: args.session.displayName,
           imageUrl: args.session.imageUrl,
           email: args.session.email,
@@ -1368,13 +1374,13 @@ export const ingestEvent = internalMutation({
     const opencodeSessionId = args.session.opencodeSessionId;
     const promptRedaction = redactText(args.session.prompt);
     const reasonRedaction = redactList(args.session.reasons);
-    const orgPolicy = await getOrgPolicy(ctx, args.session.clerkOrgId);
+    const orgPolicy = await getOrgPolicy(ctx, effectiveClerkOrgId);
     const requestedPrivacyMode = args.session.privacyMode ?? orgPolicy.mode;
     const privacyMode = orgPolicy.mode === 'local_only' ? 'local_only' : requestedPrivacyMode;
     const canWritePublicPost = (
       privacyMode === 'public'
       && orgPolicy.publicPostingEnabled
-      && (!orgPolicy.requireClerkForPublicProfiles || Boolean(args.session.clerkUserId))
+      && (!orgPolicy.requireClerkForPublicProfiles || Boolean(effectiveClerkUserId))
     );
 
     let session = localSessionId
@@ -1401,7 +1407,7 @@ export const ingestEvent = internalMutation({
       localSessionId,
       opencodeSessionId,
       clerkUserId: effectiveClerkUserId,
-      clerkOrgId: args.session.clerkOrgId,
+      clerkOrgId: effectiveClerkOrgId,
       username,
       status: args.session.status,
       prompt: promptRedaction.value ?? '',
@@ -1447,7 +1453,7 @@ export const ingestEvent = internalMutation({
         sessionId,
         userId,
         clerkUserId: effectiveClerkUserId ?? publicPost.clerkUserId,
-        clerkOrgId: publicPost.clerkOrgId ?? args.session.clerkOrgId,
+        clerkOrgId: effectiveClerkOrgId ?? publicPost.clerkOrgId,
         username,
         localPostId: publicPost.localPostId,
         type: publicPost.type,

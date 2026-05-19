@@ -27,6 +27,7 @@ Read by [`packages/karen/bin/karen.js`](../../../packages/karen/bin/karen.js).
 | `KAREN_USER` | `os.userInfo().username` | Username Karen records under in PromptCourt. |
 | `KAREN_INSTALL_DIR` | `~/.local/bin` | Where the launcher is written. See [install.md](install.md). |
 | `KAREN_SKIP_SETUP` | `unset` | Set to `1` to skip the setup wizard at startup. |
+| `KAREN_ALLOW_RAW_OPENCODE` | `0` | Set to `1` to enable raw `/tui-raw`, `/opencode`, and `/oc` passthrough commands. `/run` remains PromptCourt-guarded. |
 | `KAREN_AUDIO` | `1` (TTY only) | Master audio switch for terminal cues. |
 | `KAREN_AUDIO_FORCE` | `0` | Force audio even when not running in a TTY. |
 | `KAREN_BELL` | `1` | Terminal bell cues. |
@@ -70,6 +71,11 @@ Read by Karen's PromptCourt server in [`packages/web/server/lib/promptcourt/clou
 | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | compatibility | Mirror for a future Next.js landing app. |
 | `CLERK_SECRET_KEY` | server | Server-side Clerk secret. Treat as secret. |
 | `CLERK_JWT_ISSUER_DOMAIN` | Convex | Set in the Convex deployment env to the Clerk Frontend API URL. |
+| `KAREN_TRUST_FORWARD_HEADERS` | Convex | Set to `1` only when Convex is behind a trusted proxy path whose `x-forwarded-for` / `cf-connecting-ip` / `x-real-ip` values are authoritative for rate limiting. |
+| `KAREN_VOICE_ALLOWED_ORIGINS` | Convex | Comma-separated browser origins allowed to call `/karen/voice/synthesize`; required for browser voice CORS. |
+| `KAREN_VOICE_ALLOWED_IDS` | Convex | Comma-separated ElevenLabs voice IDs the browser voice proxy may use. Defaults to `KAREN_VOICE_DEFAULT_ID` when unset. |
+| `KAREN_VOICE_DEFAULT_ID` | Convex | Default ElevenLabs voice ID for the browser voice proxy. |
+| `KAREN_VOICE_SYNTH_SECRET` | Convex + UI caller | Optional shared secret required as `x-karen-voice-secret` on `/karen/voice/synthesize`. Treat as secret. |
 
 ### Inherited variables Karen relies on
 

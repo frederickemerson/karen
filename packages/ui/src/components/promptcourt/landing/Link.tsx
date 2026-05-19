@@ -61,7 +61,9 @@ const SignedOutPanel: React.FC<{ code: string | null }> = ({ code }) => {
   React.useEffect(() => {
     if (typeof window === 'undefined') return;
     if (code) {
-      try { window.sessionStorage.setItem(PENDING_CODE_KEY, code); } catch {}
+      try { window.sessionStorage.setItem(PENDING_CODE_KEY, code); } catch {
+        // Session storage can be unavailable in strict privacy modes.
+      }
     }
   }, [code]);
 
@@ -131,7 +133,9 @@ const SignedInPanel: React.FC<{ code: string | null }> = ({ code }) => {
         if (result?.ok) {
           // Clear the pending-code marker so the post-signup snap-back stops firing.
           if (typeof window !== 'undefined') {
-            try { window.sessionStorage.removeItem(PENDING_CODE_KEY); } catch {}
+            try { window.sessionStorage.removeItem(PENDING_CODE_KEY); } catch {
+              // Session storage can be unavailable in strict privacy modes.
+            }
           }
           setState({ kind: 'success', username: result.username });
         } else {

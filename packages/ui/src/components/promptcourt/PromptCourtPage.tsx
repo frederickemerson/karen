@@ -1131,18 +1131,15 @@ const CloudPromptCourtPage: React.FC<{ username?: string | null; viewerUsername:
 }) => {
   const resolvedUsername = username || viewerUsername;
   const overview = useQuery(api.karen.overview) as PromptCourtOverview | undefined;
-  // For other people's profiles, use the public-only query. Convex agent ships
-  // `profilePublic` separately; until `_generated/api.d.ts` includes it, the
-  // cast below silences the missing-key error. Returns `null` for placeholder /
-  // suspended / private profiles.
-  const apiAny = api as any;
+  // For other people's profiles, use the public-only query. Returns `null` for
+  // placeholder, suspended, or private profiles.
   const ownProfile = useQuery(
-    apiAny.karen.profile,
-    isOwnProfile ? { username: resolvedUsername } : 'skip' as any,
+    api.karen.profile,
+    isOwnProfile ? { username: resolvedUsername } : 'skip',
   ) as PromptCourtProfile | undefined;
   const publicProfile = useQuery(
-    apiAny.karen.profilePublic ?? apiAny.karen.profile,
-    !isOwnProfile ? { username: resolvedUsername } : 'skip' as any,
+    api.karen.profilePublic,
+    !isOwnProfile ? { username: resolvedUsername } : 'skip',
   ) as PromptCourtProfile | null | undefined;
   const profile = isOwnProfile ? ownProfile : publicProfile;
   const loading = profile === undefined;

@@ -115,6 +115,22 @@ export type PromptCourtGuiRun = {
 };
 
 const USERNAME_KEY = 'promptcourt_username';
+let promptCourtSessionReady: Promise<void> | null = null;
+
+const ensurePromptCourtSession = async (): Promise<void> => {
+  if (typeof window === 'undefined') return;
+  if (!promptCourtSessionReady) {
+    promptCourtSessionReady = fetch('/api/promptcourt/session', {
+      credentials: 'same-origin',
+      headers: { accept: 'application/json' },
+    }).then((response) => {
+      if (!response.ok) {
+        throw new Error(`PromptCourt session bootstrap failed (${response.status})`);
+      }
+    });
+  }
+  await promptCourtSessionReady;
+};
 
 export const getPromptCourtUsername = (): string => {
   if (typeof window === 'undefined') return 'local-user';
@@ -141,6 +157,7 @@ export const evaluatePromptCourtPrompt = async (
   prompt: string,
   options?: { recordBlocked?: boolean },
 ): Promise<PromptCourtEvaluation> => {
+  await ensurePromptCourtSession();
   const username = getPromptCourtUsername();
   const response = await fetch('/api/promptcourt/evaluate', {
     method: 'POST',
@@ -160,6 +177,7 @@ export const evaluatePromptCourtPrompt = async (
 };
 
 export const createPromptCourtGuiRun = async (prompt: string): Promise<{ message: string; run: PromptCourtGuiRun }> => {
+  await ensurePromptCourtSession();
   const username = getPromptCourtUsername();
   const response = await fetch('/api/promptcourt/gui-runs', {
     method: 'POST',
@@ -190,6 +208,7 @@ export const createPromptCourtGuiRun = async (prompt: string): Promise<{ message
 };
 
 export const fetchPromptCourtFeed = async (): Promise<PromptCourtPublicPost[]> => {
+  await ensurePromptCourtSession();
   const response = await fetch('/api/promptcourt/feed', { headers: { accept: 'application/json' } });
   if (!response.ok) {
     throw new Error(`PromptCourt feed failed (${response.status})`);
@@ -199,6 +218,7 @@ export const fetchPromptCourtFeed = async (): Promise<PromptCourtPublicPost[]> =
 };
 
 export const fetchPromptCourtProfile = async (username = getPromptCourtUsername()): Promise<PromptCourtProfile> => {
+  await ensurePromptCourtSession();
   const response = await fetch(`/api/promptcourt/profile/${encodeURIComponent(username)}`, {
     headers: { accept: 'application/json' },
   });
@@ -209,6 +229,7 @@ export const fetchPromptCourtProfile = async (username = getPromptCourtUsername(
 };
 
 export const fetchPromptCourtOverview = async (): Promise<PromptCourtOverview> => {
+  await ensurePromptCourtSession();
   const response = await fetch('/api/promptcourt/overview', {
     headers: { accept: 'application/json' },
   });
@@ -221,6 +242,7 @@ export const fetchPromptCourtOverview = async (): Promise<PromptCourtOverview> =
 export const fetchPromptCourtRunEvents = async (
   options: { username?: string; since?: string; limit?: number } = {},
 ): Promise<PromptCourtRunEvent[]> => {
+  await ensurePromptCourtSession();
   const params = new URLSearchParams();
   if (options.username) params.set('username', options.username);
   if (options.since) params.set('since', options.since);

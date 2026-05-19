@@ -52,6 +52,7 @@ const generateUserCode = () => {
 };
 
 const clientIp = (request: Request): string => {
+  if (process.env.KAREN_TRUST_FORWARD_HEADERS !== '1') return 'no-ip';
   const forwarded = request.headers.get('x-forwarded-for');
   if (forwarded) {
     const first = forwarded.split(',')[0]?.trim();
@@ -394,17 +395,23 @@ const VOICE_ALLOWED_ORIGINS = (process.env.KAREN_VOICE_ALLOWED_ORIGINS || '')
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean);
+const VOICE_ALLOWED_IDS = (process.env.KAREN_VOICE_ALLOWED_IDS || process.env.KAREN_VOICE_DEFAULT_ID || 'z9fAnlkpzviPz146aGWa')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+const allowedVoiceOrigin = (request: Request): string | null => {
+  const origin = request.headers.get('origin') || '';
+  if (!origin || VOICE_ALLOWED_ORIGINS.length === 0) return null;
+  return VOICE_ALLOWED_ORIGINS.includes(origin) ? origin : null;
+};
 
 const corsHeaders = (request: Request): Record<string, string> => {
-  const origin = request.headers.get('origin') || '';
-  let allow = '*';
-  if (VOICE_ALLOWED_ORIGINS.length > 0) {
-    allow = VOICE_ALLOWED_ORIGINS.includes(origin) ? origin : VOICE_ALLOWED_ORIGINS[0];
-  }
+  const allow = allowedVoiceOrigin(request);
   return {
-    'access-control-allow-origin': allow,
+    ...(allow ? { 'access-control-allow-origin': allow } : {}),
     'access-control-allow-methods': 'POST, OPTIONS',
-    'access-control-allow-headers': 'content-type',
+    'access-control-allow-headers': 'content-type, x-karen-voice-secret',
     'access-control-max-age': '86400',
     'vary': 'origin',
   };
@@ -413,16 +420,34 @@ const corsHeaders = (request: Request): Record<string, string> => {
 http.route({
   path: '/karen/voice/synthesize',
   method: 'OPTIONS',
-  handler: httpAction(async (_ctx, request) => new Response(null, {
-    status: 204,
-    headers: corsHeaders(request),
-  })),
+  handler: httpAction(async (_ctx, request) => {
+    if (!allowedVoiceOrigin(request)) {
+      return new Response(null, { status: 403, headers: corsHeaders(request) });
+    }
+    return new Response(null, {
+      status: 204,
+      headers: corsHeaders(request),
+    });
+  }),
 });
 
 http.route({
   path: '/karen/voice/synthesize',
   method: 'POST',
   handler: httpAction(async (ctx, request) => {
+    if (!allowedVoiceOrigin(request)) {
+      return new Response(
+        JSON.stringify({ ok: false, error: 'origin_not_allowed' }),
+        { status: 403, headers: { 'content-type': 'application/json', ...corsHeaders(request) } },
+      );
+    }
+    const voiceSecret = process.env.KAREN_VOICE_SYNTH_SECRET;
+    if (voiceSecret && request.headers.get('x-karen-voice-secret') !== voiceSecret) {
+      return new Response(
+        JSON.stringify({ ok: false, error: 'unauthorized' }),
+        { status: 401, headers: { 'content-type': 'application/json', ...corsHeaders(request) } },
+      );
+    }
     const apiKey = process.env.ELEVENLABS_API_KEY;
     if (!apiKey) {
       return new Response(
@@ -454,10 +479,7 @@ http.route({
     // Per-IP rate limit. 30 requests per 5 minutes; on overflow we lock the IP
     // out for the rest of the window. Falls back to a `no-ip` bucket if the
     // edge didn't tell us where the request came from.
-    const ip = request.headers.get('x-forwarded-for')?.split(',')[0].trim()
-      || request.headers.get('cf-connecting-ip')
-      || request.headers.get('x-real-ip')
-      || 'no-ip';
+    const ip = clientIp(request);
     const rl = await ctx.runMutation(internal.karen.checkVoiceRateLimit, {
       key: `voice:${ip}`,
       maxPerWindow: 30,
@@ -470,9 +492,12 @@ http.route({
       );
     }
 
-    const voiceId = (typeof body.voiceId === 'string' && body.voiceId.length < 64)
+    const requestedVoiceId = (typeof body.voiceId === 'string' && body.voiceId.length < 64)
       ? body.voiceId
       : (process.env.KAREN_VOICE_DEFAULT_ID || 'z9fAnlkpzviPz146aGWa');
+    const voiceId = VOICE_ALLOWED_IDS.includes(requestedVoiceId)
+      ? requestedVoiceId
+      : VOICE_ALLOWED_IDS[0];
     const mood = (typeof body.mood === 'string' && ['angry', 'standard', 'deadpan'].includes(body.mood))
       ? body.mood
       : 'standard';
